@@ -26,26 +26,39 @@ export async function indexMissing() {
         const data = await response.json();
 
         if (data.success) {
+            const failedInfo = data.failed_conversations > 0
+                ? ` | <span style="color: #d32f2f; font-weight: 700;">⚠ ${data.failed_conversations} failed</span>`
+                : '';
+
             if (data.new_conversations === 0) {
+                const bgColor = data.failed_conversations > 0 ? '#fff3e0' : '#e3f2fd';
+                const borderColor = data.failed_conversations > 0 ? '#ff9800' : '#2196f3';
+                const statusText = data.failed_conversations > 0
+                    ? `✓ All valid conversations indexed (${data.failed_conversations} corrupt files skipped)`
+                    : '✓ All conversations are already indexed';
+
                 resultsDiv.innerHTML = `
-                    <div class="results-header" style="background: #4CAF50; padding: 15px;">
-                        <strong>✓ All conversations are already indexed</strong>
-                        <div style="margin-top: 8px; opacity: 0.9;">
-                            Total files: ${data.total_files} | Already indexed: ${data.already_indexed}
+                    <div class="results-header" style="background: ${bgColor}; padding: 15px; color: #000; border-left: 4px solid ${borderColor};">
+                        <strong style="font-size: 16px;">${statusText}</strong>
+                        <div style="margin-top: 10px;">
+                            <strong>Total files:</strong> ${data.total_files} | <strong>Already indexed:</strong> ${data.already_indexed}${failedInfo}
                         </div>
-                        <div style="margin-top: 8px; font-size: 13px; opacity: 0.8;">
+                        <div style="margin-top: 10px; font-size: 13px; color: #555;">
                             The live file watcher will automatically index new conversations as you create them.
                         </div>
                     </div>
                 `;
             } else {
+                const bgColor = data.failed_conversations > 0 ? '#fff3e0' : '#e3f2fd';
+                const borderColor = data.failed_conversations > 0 ? '#ff9800' : '#2196f3';
+
                 resultsDiv.innerHTML = `
-                    <div class="results-header" style="background: #4CAF50; padding: 15px;">
-                        <strong>✓ Added ${data.new_conversations} conversations to index</strong>
-                        <div style="margin-top: 8px; opacity: 0.9;">
-                            Total files: ${data.total_files} | Previously indexed: ${data.already_indexed} | Time: ${data.time_seconds}s
+                    <div class="results-header" style="background: ${bgColor}; padding: 15px; color: #000; border-left: 4px solid ${borderColor};">
+                        <strong style="font-size: 16px;">✓ Added ${data.new_conversations} conversations to index</strong>
+                        <div style="margin-top: 10px;">
+                            <strong>Total files:</strong> ${data.total_files} | <strong>Previously indexed:</strong> ${data.already_indexed} | <strong>Time:</strong> ${data.time_seconds}s${failedInfo}
                         </div>
-                        <div style="margin-top: 8px; font-size: 13px; opacity: 0.8;">
+                        <div style="margin-top: 10px; font-size: 13px; color: #555;">
                             Your new conversations are now searchable!
                         </div>
                     </div>
