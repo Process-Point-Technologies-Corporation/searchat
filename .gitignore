@@ -96,3 +96,17 @@ site/
 # Package managers
 Pipfile.lock
 poetry.lock
+
+# Agentic Systems
+.claude/
+.opencode/
+.serena/
+
+# Developer workspace (Sage-Dev generated files)
+.docs/
+.sage/
+
+# Local Testing
+
+# macOS
+.DS_Store
