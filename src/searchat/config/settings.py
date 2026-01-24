@@ -11,10 +11,10 @@ Configuration precedence (highest to lowest):
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 import tomli
 from dotenv import load_dotenv
 
+from ..core.logging_config import LogConfig
 from .constants import (
     DEFAULT_DATA_DIR,
     DEFAULT_CONFIG_SUBDIR,
@@ -71,7 +71,7 @@ def _load_env_files():
 _load_env_files()
 
 
-def _get_env_str(key: str, default: Optional[str] = None) -> Optional[str]:
+def _get_env_str(key: str, default: str | None = None) -> str | None:
     """Get string value from environment variable. Empty strings are treated as missing."""
     value = os.getenv(key)
     if value is None or value == "":
@@ -310,9 +310,10 @@ class Config:
     embedding: EmbeddingConfig
     ui: UIConfig
     performance: PerformanceConfig
+    logging: LogConfig
 
     @classmethod
-    def load(cls, config_path: Optional[Path] = None) -> "Config":
+    def load(cls, config_path: Path | None = None) -> "Config":
         """
         Load configuration with proper precedence.
 
@@ -375,4 +376,5 @@ class Config:
             embedding=EmbeddingConfig.from_dict(data.get("embedding", {})),
             ui=UIConfig.from_dict(data.get("ui", {})),
             performance=PerformanceConfig.from_dict(data.get("performance", {})),
+            logging=LogConfig(**data.get("logging", {})),
         )

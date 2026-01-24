@@ -45,3 +45,12 @@ highlight_color = "#FFEB3B"
 memory_limit_mb = 3000
 query_cache_size = 100
 enable_profiling = false
+
+[logging]
+level = "INFO"
+file_enabled = true
+file_path = "~/.searchat/logs/searchat.log"
+file_max_bytes = 10485760  # 10MB
+file_backup_count = 5
+format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+use_rich_console = true
