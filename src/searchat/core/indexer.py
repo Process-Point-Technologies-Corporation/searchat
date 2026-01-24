@@ -1,6 +1,5 @@
 import hashlib
 import json
-import logging
 import re
 import time
 from datetime import datetime
@@ -12,6 +11,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from sentence_transformers import SentenceTransformer
 
+from searchat.core.logging_config import get_logger
+from searchat.core.progress import ProgressCallback, NullProgressAdapter
 from searchat.models import (
     ConversationRecord,
     MessageRecord,
@@ -21,6 +22,8 @@ from searchat.models import (
     METADATA_SCHEMA
 )
 from searchat.config import PathResolver, Config
+
+logger = get_logger(__name__)
 
 
 class ConversationIndexer:
@@ -51,7 +54,7 @@ class ConversationIndexer:
 
         # Initialize embedder with GPU if available
         device = config.embedding.get_device()
-        logging.info(f"Initializing embedding model on device: {device}")
+        logger.info(f"Initializing embedding model on device: {device}")
         self.embedder = SentenceTransformer(config.embedding.model, device=device)
 
         self.batch_size = config.embedding.batch_size
@@ -178,7 +181,11 @@ class ConversationIndexer:
         
         return chunks_with_metadata
     
-    def index_all(self, force: bool = False) -> IndexStats:
+    def index_all(
+        self,
+        force: bool = False,
+        progress: ProgressCallback | None = None,
+    ) -> IndexStats:
         """
         Build index from scratch by scanning all JSONL source files.
 
@@ -190,6 +197,7 @@ class ConversationIndexer:
             force: Must be True to rebuild when existing index is present.
                    This acknowledges that existing indexed data will be lost
                    if source JSONLs are missing or incomplete.
+            progress: Optional progress callback for reporting
 
         Returns:
             IndexStats with indexing results
@@ -197,6 +205,8 @@ class ConversationIndexer:
         Raises:
             RuntimeError: If existing index found and force=False
         """
+        if progress is None:
+            progress = NullProgressAdapter()
         has_existing_index = self._has_existing_index()
 
         if has_existing_index and not force:
@@ -211,7 +221,7 @@ class ConversationIndexer:
             )
 
         if has_existing_index:
-            logging.warning(
+            logger.warning(
                 f"Force rebuilding index. Existing data at {self.data_dir} will be replaced."
             )
             # Clear existing data
@@ -224,104 +234,116 @@ class ConversationIndexer:
 
         start_time = time.time()
 
-        all_records: List[ConversationRecord] = []
-        embeddings: List[np.ndarray] = []
-        metadata: List[Dict] = []
-        
-        # Process Claude Code conversations
+        # Phase 1: Discovery
+        progress.update_phase("Discovering conversation files")
+
+        # Collect all files first for accurate progress tracking
+        all_files = []
+        file_metadata = []  # Store (file_path, project_id, agent_type)
+
         for claude_dir in self.claude_dirs:
             if not claude_dir.exists():
                 continue
-
             for project_dir in claude_dir.iterdir():
                 if not project_dir.is_dir():
                     continue
-
                 project_id = project_dir.name
-                project_records: List[ConversationRecord] = []
-
                 for json_file in project_dir.glob("*.jsonl"):
-                    try:
-                        record = self._process_conversation(json_file, project_id, len(embeddings))
+                    all_files.append(json_file)
+                    file_metadata.append((json_file, project_id, 'claude'))
 
-                        # Skip conversations with no messages
-                        if record.message_count == 0:
-                            continue
-
-                        project_records.append(record)
-                        all_records.append(record)
-
-                        chunks_with_meta = self._chunk_by_messages(record.messages, record.title)
-
-                        # Batch encode all chunks for this conversation
-                        chunk_embeddings = self._batch_encode_chunks(chunks_with_meta)
-
-                        for chunk_idx, (chunk_meta, embedding) in enumerate(zip(chunks_with_meta, chunk_embeddings)):
-                            embeddings.append(embedding)
-
-                            metadata.append({
-                                'vector_id': len(embeddings) - 1,
-                                'conversation_id': record.conversation_id,
-                                'project_id': record.project_id,
-                                'chunk_index': chunk_idx,
-                                'chunk_text': chunk_meta['text'],
-                                'message_start_index': chunk_meta['start_message_index'],
-                                'message_end_index': chunk_meta['end_message_index'],
-                                'created_at': record.created_at
-                            })
-                    except Exception as e:
-                        raise RuntimeError(f"Failed to process {json_file}: {e}") from e
-                
-                if project_records:
-                    self._write_parquet_batch(project_records, project_id)
-
-        # Process Mistral Vibe sessions
-        vibe_records: List[ConversationRecord] = []
         for vibe_dir in self.vibe_dirs:
             if not vibe_dir.exists():
                 continue
-
             for json_file in vibe_dir.glob("*.json"):
-                try:
-                    record = self._process_vibe_session(json_file, len(embeddings))
+                all_files.append(json_file)
+                file_metadata.append((json_file, "vibe-sessions", 'vibe'))
 
-                    # Skip sessions with no messages
-                    if record.message_count == 0:
-                        continue
+        # Phase 2: Processing conversations
+        progress.update_phase("Processing conversations")
 
-                    vibe_records.append(record)
-                    all_records.append(record)
+        all_records: List[ConversationRecord] = []
+        all_chunks_with_meta: List[Dict] = []
+        project_records_map: Dict[str, List[ConversationRecord]] = {}
 
-                    chunks_with_meta = self._chunk_by_messages(record.messages, record.title)
+        for idx, (json_file, project_id, agent_type) in enumerate(file_metadata, 1):
+            progress.update_file_progress(idx, len(file_metadata), json_file.name)
 
-                    # Batch encode all chunks for this session
-                    chunk_embeddings = self._batch_encode_chunks(chunks_with_meta)
+            try:
+                # Process based on agent type
+                if agent_type == 'claude':
+                    record = self._process_conversation(json_file, project_id, 0)
+                else:
+                    record = self._process_vibe_session(json_file, 0)
 
-                    for chunk_idx, (chunk_meta, embedding) in enumerate(zip(chunks_with_meta, chunk_embeddings)):
-                        embeddings.append(embedding)
-
-                        metadata.append({
-                            'vector_id': len(embeddings) - 1,
-                            'conversation_id': record.conversation_id,
-                            'project_id': record.project_id,
-                            'chunk_index': chunk_idx,
-                            'chunk_text': chunk_meta['text'],
-                            'message_start_index': chunk_meta['start_message_index'],
-                            'message_end_index': chunk_meta['end_message_index'],
-                            'created_at': record.created_at
-                        })
-                except Exception as e:
-                    logging.warning(f"Failed to process Vibe session {json_file}: {e}")
+                # Skip conversations with no messages
+                if record.message_count == 0:
                     continue
 
-        if vibe_records:
-            self._write_parquet_batch(vibe_records, "vibe-sessions")
+                all_records.append(record)
 
-        if embeddings:
-            self._build_faiss_index(np.array(embeddings), metadata)
-        
-        self._write_index_metadata(len(all_records), len(embeddings))
-        
+                if project_id not in project_records_map:
+                    project_records_map[project_id] = []
+                project_records_map[project_id].append(record)
+
+                # Collect chunks (will batch encode later)
+                chunks_with_meta = self._chunk_by_messages(record.messages, record.title)
+                for chunk in chunks_with_meta:
+                    chunk['_record'] = record  # Store reference for later
+                    all_chunks_with_meta.append(chunk)
+
+            except Exception as e:
+                if agent_type == 'claude':
+                    raise RuntimeError(f"Failed to process {json_file}: {e}") from e
+                else:
+                    logger.warning(f"Failed to process Vibe session {json_file}: {e}")
+                    continue
+
+        # Phase 3: Generate embeddings
+        progress.update_phase("Generating embeddings")
+        embeddings_array = self._batch_encode_chunks(all_chunks_with_meta, progress)
+
+        # Build metadata for FAISS index
+        metadata: List[Dict] = []
+        for chunk_idx, (chunk_meta, embedding) in enumerate(zip(all_chunks_with_meta, embeddings_array)):
+            record = chunk_meta['_record']
+            metadata.append({
+                'vector_id': chunk_idx,
+                'conversation_id': record.conversation_id,
+                'project_id': record.project_id,
+                'chunk_index': chunk_idx,
+                'chunk_text': chunk_meta['text'],
+                'message_start_index': chunk_meta['start_message_index'],
+                'message_end_index': chunk_meta['end_message_index'],
+                'created_at': record.created_at
+            })
+
+        # Phase 4: Building index
+        progress.update_phase("Building search index")
+        if len(embeddings_array) > 0:
+            self._build_faiss_index(embeddings_array, metadata)
+
+        # Phase 5: Saving
+        progress.update_phase("Writing to storage")
+        for project_id, records in project_records_map.items():
+            # Update embedding_id for records
+            embedding_offset = 0
+            for record in records:
+                record.embedding_id = embedding_offset
+                chunks_count = len(self._chunk_by_messages(record.messages, record.title))
+                embedding_offset += chunks_count
+            self._write_parquet_batch(records, project_id)
+
+        self._write_index_metadata(len(all_records), len(embeddings_array))
+
+        # Update final stats
+        progress.update_stats(
+            conversations=len(all_records),
+            chunks=len(all_chunks_with_meta),
+            embeddings=len(embeddings_array)
+        )
+        progress.finish()
+
         elapsed = time.time() - start_time
         
         parquet_size = sum(
@@ -339,25 +361,49 @@ class ConversationIndexer:
             faiss_size_mb=faiss_size
         )
 
-    def _batch_encode_chunks(self, chunks_with_meta: List[Dict]) -> np.ndarray:
+    def _batch_encode_chunks(
+        self,
+        chunks_with_meta: List[Dict],
+        progress: ProgressCallback | None = None,
+    ) -> np.ndarray:
         """
         Encode chunks in batches for better performance.
         Uses configured batch_size to avoid memory issues.
+
+        Args:
+            chunks_with_meta: List of chunks with metadata
+            progress: Optional progress callback
+
+        Returns:
+            Embeddings array
         """
+        if progress is None:
+            progress = NullProgressAdapter()
+
         if not chunks_with_meta:
             return np.array([])
 
         texts = [chunk['text'] for chunk in chunks_with_meta]
 
-        # Encode in batches using SentenceTransformer's built-in batching
-        embeddings = self.embedder.encode(
-            texts,
-            batch_size=self.batch_size,
-            show_progress_bar=False,
-            convert_to_numpy=True
-        )
+        # Encode in batches manually to report progress
+        all_embeddings = []
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i:i + self.batch_size]
+            batch_embeddings = self.embedder.encode(
+                batch,
+                batch_size=self.batch_size,
+                show_progress_bar=False,
+                convert_to_numpy=True
+            )
+            all_embeddings.extend(batch_embeddings)
 
-        return embeddings
+            # Update progress
+            progress.update_embedding_progress(
+                current=min(i + self.batch_size, len(texts)),
+                total=len(texts)
+            )
+
+        return np.array(all_embeddings)
 
     def _process_conversation(self, json_path: Path, project_id: str, embedding_id: int) -> ConversationRecord:
         with open(json_path, 'r', encoding='utf-8') as f:
@@ -664,7 +710,11 @@ class ConversationIndexer:
 
         return indexed_paths
 
-    def index_append_only(self, file_paths: List[str]) -> UpdateStats:
+    def index_append_only(
+        self,
+        file_paths: List[str],
+        progress: ProgressCallback | None = None,
+    ) -> UpdateStats:
         """
         Append-only indexing for new conversation files.
 
@@ -675,10 +725,15 @@ class ConversationIndexer:
 
         Args:
             file_paths: List of conversation file paths to index
+            progress: Optional progress callback
 
         Returns:
             UpdateStats with indexing results
         """
+        if progress is None:
+            progress = NullProgressAdapter()
+
+        progress.update_phase("Processing new conversations")
         start_time = time.time()
 
         existing_metadata = self._load_existing_metadata()
@@ -725,11 +780,13 @@ class ConversationIndexer:
         new_conversation_records: Dict[str, List[ConversationRecord]] = {}
         processed_count = 0
 
-        for file_path in new_files:
+        for idx, file_path in enumerate(new_files, 1):
             json_path = Path(file_path)
 
+            progress.update_file_progress(idx, len(new_files), json_path.name)
+
             if not json_path.exists():
-                logging.warning(f"File not found, skipping: {file_path}")
+                logger.warning(f"File not found, skipping: {file_path}")
                 continue
 
             # Detect format and get project_id
@@ -753,7 +810,7 @@ class ConversationIndexer:
                 chunks_with_meta = self._chunk_by_messages(record.messages, record.title)
 
                 # Batch encode all chunks for this conversation
-                chunk_embeddings = self._batch_encode_chunks(chunks_with_meta)
+                chunk_embeddings = self._batch_encode_chunks(chunks_with_meta, progress)
 
                 for chunk_idx, (chunk_meta, embedding) in enumerate(zip(chunks_with_meta, chunk_embeddings)):
                     new_embeddings.append(embedding)
@@ -773,7 +830,7 @@ class ConversationIndexer:
                 processed_count += 1
 
             except Exception as e:
-                logging.error(f"Failed to process {file_path}: {e}")
+                logger.error(f"Failed to process {file_path}: {e}")
                 continue
 
         # Append to FAISS index
@@ -834,6 +891,13 @@ class ConversationIndexer:
         total_conversations = existing_index_metadata['total_conversations'] + processed_count
         total_chunks = existing_index_metadata['total_chunks'] + len(new_embeddings)
         self._write_index_metadata(total_conversations, total_chunks)
+
+        progress.update_stats(
+            conversations=processed_count,
+            chunks=len(new_embeddings),
+            embeddings=len(new_embeddings)
+        )
+        progress.finish()
 
         elapsed = time.time() - start_time
 
