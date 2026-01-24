@@ -14,17 +14,11 @@ Options:
 """
 
 import sys
-import logging
 from pathlib import Path
-from searchat.config import Config
-from searchat.path_resolver import PathResolver
-from searchat.indexer import ConversationIndexer
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+from searchat.config import Config, PathResolver
+from searchat.core.logging_config import setup_logging
+from searchat.core.progress import create_progress
+from searchat.core.indexer import ConversationIndexer
 
 
 def main():
@@ -40,6 +34,10 @@ def main():
         # Load configuration
         print("Loading configuration...")
         config = Config.load()
+
+        # Setup logging
+        setup_logging(config.logging)
+
         search_dir = PathResolver.get_shared_search_dir(config)
 
         print(f"Search directory: {search_dir}")
@@ -126,7 +124,9 @@ def main():
             print("This may take a few minutes depending on the number of conversations.")
             print()
 
-            stats = indexer.index_append_only(new_files)
+            # Create progress adapter (auto-detects TTY)
+            progress = create_progress()
+            stats = indexer.index_append_only(new_files, progress)
 
             print()
             print("=" * 70)
@@ -142,7 +142,9 @@ def main():
             print("This may take a few minutes depending on the number of conversations.")
             print()
 
-            stats = indexer.index_all(force=force)
+            # Create progress adapter (auto-detects TTY)
+            progress = create_progress()
+            stats = indexer.index_all(force=force, progress=progress)
 
             print()
             print("=" * 70)

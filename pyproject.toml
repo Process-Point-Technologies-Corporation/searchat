@@ -50,7 +50,7 @@ dev = [
 #   uv pip install torch --index-url https://download.pytorch.org/whl/cu124
 #   uv pip install -e ".[gpu]"
 gpu = [
-    "faiss-gpu>=1.7.4",  # GPU-accelerated FAISS (replaces faiss-cpu)
+    "faiss-gpu>=1.7.2",  # GPU-accelerated FAISS (replaces faiss-cpu)
 ]
 
 [project.scripts]

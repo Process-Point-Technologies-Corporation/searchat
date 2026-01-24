@@ -1,6 +1,5 @@
 """FastAPI application initialization and configuration."""
 import os
-import logging
 from pathlib import Path
 from typing import List
 from datetime import datetime
@@ -11,6 +10,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from searchat.core import ConversationWatcher
+from searchat.core.logging_config import setup_logging, get_logger
+from searchat.core.progress import LoggingProgressAdapter
 from searchat.api.dependencies import (
     initialize_services,
     get_config,
@@ -79,8 +80,8 @@ def on_new_conversations(file_paths: List[str]) -> None:
     """Callback when watcher detects new conversation files."""
     global projects_cache, watcher_stats, indexing_state
 
-    logger = logging.getLogger(__name__)
-    logger.info(f"Indexing {len(file_paths)} new conversations...")
+    logger = get_logger(__name__)
+    logger.info(f"Auto-indexing {len(file_paths)} new conversations")
 
     try:
         indexer = get_indexer()
@@ -93,7 +94,10 @@ def on_new_conversations(file_paths: List[str]) -> None:
         indexing_state["files_total"] = len(file_paths)
         indexing_state["files_processed"] = 0
 
-        stats = indexer.index_append_only(file_paths)
+        # Use logging-based progress for background task
+        progress = LoggingProgressAdapter()
+
+        stats = indexer.index_append_only(file_paths, progress)
 
         if stats.new_conversations > 0:
             # Reload search engine to pick up new data
@@ -118,14 +122,15 @@ def on_new_conversations(file_paths: List[str]) -> None:
 @app.on_event("startup")
 async def startup_event():
     """Initialize services and start the file watcher on server startup."""
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
-
-    # Initialize all services (search engine, indexer, etc.)
+    # IMPORTANT: Initialize services FIRST (loads config)
     initialize_services()
 
-    # Start file watcher
+    # THEN get config and setup logging
     config = get_config()
+    setup_logging(config.logging)
+    logger = get_logger(__name__)
+
+    # Start file watcher
     indexer = get_indexer()
 
     watcher = ConversationWatcher(

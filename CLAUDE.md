@@ -84,5 +84,48 @@ searchat-web
 - Backup manager: `src/searchat/backup.py`
 - All existing functionality preserved (no changes to middle content)
 
+## Git Workflow
+
+**CRITICAL: Work with Fork, Not Upstream**
+
+This is a fork of the upstream repository. Always push and create PRs against the fork.
+
+**Repository Setup:**
+- **Fork (origin):** `https://github.com/Mathews-Tom/searchat.git` ← **PUSH HERE**
+- **Upstream:** `https://github.com/Process-Point-Technologies-Corporation/searchat.git` (read-only)
+
+**Workflow:**
+```bash
+# Push to fork (origin)
+git push origin <branch-name>
+
+# Create PR on fork
+gh pr create --repo Mathews-Tom/searchat --base master --head <branch-name>
+
+# Never push directly to upstream
+# ❌ git push upstream <branch-name>
+# ❌ gh pr create --repo Process-Point-Technologies-Corporation/searchat
+```
+
+**Remote Configuration:**
+```bash
+git remote -v
+# origin    https://github.com/Mathews-Tom/searchat.git (push/fetch)
+# upstream  https://github.com/Process-Point-Technologies-Corporation/searchat.git (fetch only)
+```
+
+**Syncing with Upstream:**
+```bash
+# Fetch upstream changes
+git fetch upstream
+
+# Merge upstream/master into local master
+git checkout master
+git merge upstream/master
+
+# Push updated master to fork
+git push origin master
+```
+
 ## Config
 Configuration file: `~/.searchat/config/settings.toml`

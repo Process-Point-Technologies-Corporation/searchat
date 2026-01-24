@@ -1,10 +1,12 @@
 """Indexing endpoints - manual reindex and index missing conversations."""
-import logging
+import asyncio
 import time
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 
+from searchat.core.logging_config import get_logger
+from searchat.core.progress import LoggingProgressAdapter
 from searchat.config import PathResolver
 from searchat.api.dependencies import (
     get_config,
@@ -16,7 +18,21 @@ from searchat.api.dependencies import (
 
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
+
+class StateTrackingProgressAdapter(LoggingProgressAdapter):
+    """Progress adapter that updates API indexing state."""
+
+    def __init__(self, state_dict: dict) -> None:
+        super().__init__()
+        self.state = state_dict
+
+    def update_file_progress(self, current: int, total: int, filename: str) -> None:
+        """Update file progress and API state."""
+        super().update_file_progress(current, total, filename)
+        self.state["files_processed"] = current
+        self.state["files_total"] = total
 
 
 @router.post("/reindex")
@@ -85,9 +101,16 @@ async def index_missing():
         indexing_state["files_total"] = len(new_files)
         indexing_state["files_processed"] = 0
 
-        # Index new files
-        logger.info(f"Found {len(new_files)} missing conversations to index (skipping {already_indexed_count} already indexed)")
-        stats = indexer.index_append_only(new_files)
+        # Create progress adapter that updates state
+        progress = StateTrackingProgressAdapter(indexing_state)
+
+        # Index new files (run in thread pool to avoid blocking)
+        logger.info(f"Indexing {len(new_files)} missing conversations")
+        stats = await asyncio.to_thread(
+            indexer.index_append_only,
+            new_files,
+            progress,
+        )
 
         # Reload search engine to pick up new data
         search_engine._initialize()
