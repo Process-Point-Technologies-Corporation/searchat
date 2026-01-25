@@ -16,9 +16,8 @@ Options:
 import sys
 import logging
 from pathlib import Path
-from searchat.config import Config
-from searchat.path_resolver import PathResolver
-from searchat.indexer import ConversationIndexer
+from searchat.config import Config, PathResolver
+from searchat.core.indexer import ConversationIndexer
 
 # Configure logging
 logging.basicConfig(
