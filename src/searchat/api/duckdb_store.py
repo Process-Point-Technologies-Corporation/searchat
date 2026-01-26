@@ -11,6 +11,9 @@ from datetime import datetime
 from pathlib import Path
 
 
+ConversationSort = str
+
+
 @dataclass(frozen=True)
 class IndexStatistics:
     total_conversations: int
@@ -50,12 +53,115 @@ class DuckDBStore:
             # Project only the required column.
             query = """
             SELECT DISTINCT project_id
-            FROM parquet_scan($1)
+            FROM parquet_scan(?)
             WHERE message_count > 0
             ORDER BY project_id
             """
             rows = con.execute(query, [str(self._conversations_dir / "*.parquet")]).fetchall()
             return [r[0] for r in rows]
+        finally:
+            con.close()
+
+    def list_conversations(
+        self,
+        *,
+        sort_by: ConversationSort = "length",
+        project_id: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> list[dict]:
+        parquets = self._conversation_parquets()
+        if not parquets:
+            return []
+
+        order_by = {
+            "length": "message_count DESC",
+            "date_newest": "updated_at DESC",
+            "date_oldest": "updated_at ASC",
+            "title": "title ASC",
+        }.get(sort_by, "message_count DESC")
+
+        conditions = ["message_count > 0"]
+        params: list[object] = [str(self._conversations_dir / "*.parquet")]
+
+        if project_id:
+            conditions.append("project_id = ?")
+            params.append(project_id)
+
+        if date_from:
+            conditions.append("updated_at >= ?")
+            params.append(date_from)
+
+        if date_to:
+            conditions.append("updated_at < ?")
+            params.append(date_to)
+
+        where_clause = " AND ".join(conditions)
+
+        con = self._connect()
+        try:
+            query = f"""
+            SELECT
+              conversation_id,
+              project_id,
+              title,
+              created_at,
+              updated_at,
+              message_count,
+              file_path,
+              full_text
+            FROM parquet_scan(?)
+            WHERE {where_clause}
+            ORDER BY {order_by}
+            """
+            rows = con.execute(query, params).fetchall()
+            columns = [
+                "conversation_id",
+                "project_id",
+                "title",
+                "created_at",
+                "updated_at",
+                "message_count",
+                "file_path",
+                "full_text",
+            ]
+            return [dict(zip(columns, row)) for row in rows]
+        finally:
+            con.close()
+
+    def get_conversation_meta(self, conversation_id: str) -> dict | None:
+        parquets = self._conversation_parquets()
+        if not parquets:
+            return None
+
+        con = self._connect()
+        try:
+            query = """
+            SELECT
+              conversation_id,
+              project_id,
+              title,
+              created_at,
+              updated_at,
+              message_count,
+              file_path
+            FROM parquet_scan(?)
+            WHERE conversation_id = ?
+            LIMIT 1
+            """
+            row = con.execute(query, [str(self._conversations_dir / "*.parquet"), conversation_id]).fetchone()
+            if row is None:
+                return None
+            columns = [
+                "conversation_id",
+                "project_id",
+                "title",
+                "created_at",
+                "updated_at",
+                "message_count",
+                "file_path",
+            ]
+            return dict(zip(columns, row))
         finally:
             con.close()
 
@@ -81,7 +187,7 @@ class DuckDBStore:
               COUNT(DISTINCT project_id)::BIGINT AS total_projects,
               MIN(created_at) AS earliest_date,
               MAX(updated_at) AS latest_date
-            FROM parquet_scan($1)
+            FROM parquet_scan(?)
             """
             row = con.execute(query, [str(self._conversations_dir / "*.parquet")]).fetchone()
             if row is None:
