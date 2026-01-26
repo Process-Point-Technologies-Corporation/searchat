@@ -443,10 +443,9 @@ class SearchEngine:
         query_embedding = np.asarray(embedder.encode(query), dtype=np.float32)
         
         k = 100
-        faiss_index_any = cast(Any, faiss_index)
-        distances = np.empty((1, k), dtype=np.float32)
-        labels = np.empty((1, k), dtype=np.int64)
-        faiss_index_any.search(query_embedding.reshape(1, -1), k, distances, labels)
+        # Use the stable Python binding signature: search(x, k) -> (D, I).
+        # Some FAISS index wrappers don't expose the 4-arg C++ signature.
+        distances, labels = faiss_index.search(query_embedding.reshape(1, -1), k)
         
         valid_mask = labels[0] >= 0
         hits = []
