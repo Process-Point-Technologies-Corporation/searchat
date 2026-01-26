@@ -202,6 +202,15 @@ def main():
     """Run the server with configurable host and port."""
     import uvicorn
     import socket
+    import warnings
+
+    # Python 3.12 can emit a noisy multiprocessing.resource_tracker warning on
+    # shutdown with some native deps (e.g., torch/sentence-transformers).
+    warnings.filterwarnings(
+        "ignore",
+        message=r"resource_tracker: There appear to be .* leaked semaphore objects to clean up at shutdown",
+        category=UserWarning,
+    )
 
     # Get host from environment or use default
     host = os.getenv(ENV_HOST, DEFAULT_HOST)
