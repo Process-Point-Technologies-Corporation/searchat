@@ -127,22 +127,28 @@ def _warmup_semantic_components() -> None:
     readiness = get_readiness()
     started = time.perf_counter()
     try:
-        readiness.set_component("metadata", "loading")
-        readiness.set_component("faiss", "loading")
-        readiness.set_component("embedder", "loading")
-
         engine = _ensure_search_engine()
-        engine.ensure_semantic_ready()
 
+        readiness.set_component("metadata", "loading")
+        engine.ensure_metadata_ready()
         readiness.set_component("metadata", "ready")
+
+        readiness.set_component("faiss", "loading")
+        engine.ensure_faiss_loaded()
         readiness.set_component("faiss", "ready")
+
+        readiness.set_component("embedder", "loading")
+        engine.ensure_embedder_loaded()
         readiness.set_component("embedder", "ready")
     except Exception as e:
-        # Mark all as error; semantic/hybrid should fail fast.
         msg = str(e)
-        readiness.set_component("metadata", "error", error=msg)
-        readiness.set_component("faiss", "error", error=msg)
-        readiness.set_component("embedder", "error", error=msg)
+        snap = readiness.snapshot()
+        if snap.components.get("metadata") != "ready":
+            readiness.set_component("metadata", "error", error=msg)
+        if snap.components.get("faiss") != "ready":
+            readiness.set_component("faiss", "error", error=msg)
+        if snap.components.get("embedder") != "ready":
+            readiness.set_component("embedder", "error", error=msg)
     finally:
         if os.getenv("SEARCHAT_PROFILE_WARMUP") == "1":
             elapsed_ms = (time.perf_counter() - started) * 1000.0

@@ -65,7 +65,9 @@ def test_warmup_semantic_components_sets_readiness_ready(tmp_path: Path):
     deps._search_dir = tmp_path
 
     engine = Mock()
-    engine.ensure_semantic_ready = Mock()
+    engine.ensure_metadata_ready = Mock()
+    engine.ensure_faiss_loaded = Mock()
+    engine.ensure_embedder_loaded = Mock()
 
     with patch.object(deps, "_ensure_search_engine", return_value=engine):
         readiness = deps.get_readiness()
@@ -75,7 +77,9 @@ def test_warmup_semantic_components_sets_readiness_ready(tmp_path: Path):
 
         deps._warmup_semantic_components()
 
-        engine.ensure_semantic_ready.assert_called_once()
+        engine.ensure_metadata_ready.assert_called_once()
+        engine.ensure_faiss_loaded.assert_called_once()
+        engine.ensure_embedder_loaded.assert_called_once()
         snap = readiness.snapshot()
         assert snap.components["faiss"] == "ready"
         assert snap.components["metadata"] == "ready"
