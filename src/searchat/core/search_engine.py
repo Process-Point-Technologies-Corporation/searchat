@@ -67,30 +67,62 @@ class SearchEngine:
         # Keyword search only depends on conversation parquets.
         self._validate_keyword_files()
     
+    def ensure_metadata_ready(self) -> None:
+        """Ensure index metadata parquet exists and matches config."""
+        with self._init_lock:
+            self._ensure_metadata_ready_locked()
+
+
+    def ensure_faiss_loaded(self) -> None:
+        """Ensure FAISS index is loaded."""
+        with self._init_lock:
+            self._ensure_faiss_loaded_locked()
+
+
+    def ensure_embedder_loaded(self) -> None:
+        """Ensure sentence-transformers model is loaded."""
+        with self._init_lock:
+            self._ensure_embedder_loaded_locked()
+
+
     def ensure_semantic_ready(self) -> None:
         """Ensure semantic components (metadata, FAISS, embedder) are loaded."""
         with self._init_lock:
-            self._validate_keyword_files()
-            self._validate_index_metadata()
+            self._ensure_metadata_ready_locked()
+            self._ensure_faiss_loaded_locked()
+            self._ensure_embedder_loaded_locked()
 
-            if not self.metadata_path.exists():
-                raise FileNotFoundError(
-                    f"Metadata parquet not found at {self.metadata_path}. Run indexer first."
-                )
 
-            if not self.index_path.exists():
-                raise FileNotFoundError(
-                    f"FAISS index not found at {self.index_path}. Run indexer first."
-                )
+    def _ensure_metadata_ready_locked(self) -> None:
+        self._validate_keyword_files()
+        self._validate_index_metadata()
 
-            if self.faiss_index is None:
-                self.faiss_index = faiss.read_index(str(self.index_path))
+        if not self.metadata_path.exists():
+            raise FileNotFoundError(
+                f"Metadata parquet not found at {self.metadata_path}. Run indexer first."
+            )
 
-            if self.embedder is None:
-                device = self.config.embedding.get_device()
-                from sentence_transformers import SentenceTransformer
 
-                self.embedder = SentenceTransformer(self.config.embedding.model, device=device)
+    def _ensure_faiss_loaded_locked(self) -> None:
+        self._ensure_metadata_ready_locked()
+
+        if not self.index_path.exists():
+            raise FileNotFoundError(
+                f"FAISS index not found at {self.index_path}. Run indexer first."
+            )
+
+        if self.faiss_index is None:
+            self.faiss_index = faiss.read_index(str(self.index_path))
+
+
+    def _ensure_embedder_loaded_locked(self) -> None:
+        self._validate_index_metadata()
+
+        if self.embedder is None:
+            device = self.config.embedding.get_device()
+            from sentence_transformers import SentenceTransformer
+
+            self.embedder = SentenceTransformer(self.config.embedding.model, device=device)
 
 
     def refresh_index(self) -> None:
@@ -401,7 +433,8 @@ class SearchEngine:
         return search_results
     
     def _semantic_search(self, query: str, filters: Optional[SearchFilters]) -> List[SearchResult]:
-        self.ensure_semantic_ready()
+        self.ensure_faiss_loaded()
+        self.ensure_embedder_loaded()
         embedder = self.embedder
         faiss_index = self.faiss_index
         if embedder is None or faiss_index is None:
