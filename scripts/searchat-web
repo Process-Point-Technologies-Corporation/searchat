@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """Searchat Web Interface"""
 
-from searchat.web_api import main
+# Prefer the modular FastAPI app entrypoint.
+from searchat.api import main
 
 if __name__ == "__main__":
     main()
