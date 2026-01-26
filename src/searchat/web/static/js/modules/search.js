@@ -2,7 +2,16 @@
 
 import { saveSearchState } from './session.js';
 
+let _searchNonce = 0;
+
+function _sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export async function search() {
+    _searchNonce += 1;
+    const nonce = _searchNonce;
+
     const query = document.getElementById('search').value;
     const project = document.getElementById('project').value;
     const date = document.getElementById('date').value;
@@ -33,6 +42,33 @@ export async function search() {
     }
 
     const response = await fetch(`/api/search?${params}`);
+
+    if (response.status === 503) {
+        const payload = await response.json();
+        if (payload && payload.status === 'warming') {
+            const delay = payload.retry_after_ms || 500;
+            resultsDiv.innerHTML = '<div class="loading">Warming up search engine (first run)...</div>';
+            await _sleep(delay);
+            if (nonce === _searchNonce) {
+                return search();
+            }
+            return;
+        }
+
+        const msg = payload && payload.detail
+            ? payload.detail
+            : (payload && payload.errors ? JSON.stringify(payload.errors) : 'Search warming failed');
+        resultsDiv.innerHTML = `<div style="color: #f44336;">${msg}</div>`;
+        return;
+    }
+
+    if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const msg = payload && payload.detail ? payload.detail : (payload && payload.errors ? JSON.stringify(payload.errors) : 'Search failed');
+        resultsDiv.innerHTML = `<div style="color: #f44336;">${msg}</div>`;
+        return;
+    }
+
     const data = await response.json();
 
     resultsDiv.innerHTML = '';

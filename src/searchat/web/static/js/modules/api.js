@@ -1,7 +1,30 @@
 // API Client Functions
 
+function _sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export async function loadProjects() {
     const response = await fetch('/api/projects');
+
+    if (response.status === 503) {
+        const payload = await response.json();
+        if (payload && payload.status === 'warming') {
+            // Retry after warmup delay
+            await _sleep(payload.retry_after_ms || 500);
+            return loadProjects();
+        }
+
+        console.error('Failed to load projects:', payload);
+        return;
+    }
+
+    if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        console.error('Failed to load projects:', payload);
+        return;
+    }
+
     const projects = await response.json();
     const select = document.getElementById('project');
     const currentValue = select.value;
