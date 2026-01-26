@@ -9,7 +9,6 @@ import numpy as np
 import faiss
 import pyarrow as pa
 import pyarrow.parquet as pq
-from sentence_transformers import SentenceTransformer
 
 from searchat.core.logging_config import get_logger
 from searchat.core.progress import ProgressCallback, NullProgressAdapter
@@ -48,20 +47,31 @@ class ConversationIndexer:
             config = Config.load()
         self.config = config
 
-        # Check for GPU availability and warn if not using it
-        from searchat.gpu_check import check_and_warn_gpu
-        check_and_warn_gpu()
-
-        # Initialize embedder with GPU if available
-        device = config.embedding.get_device()
-        logger.info(f"Initializing embedding model on device: {device}")
-        self.embedder = SentenceTransformer(config.embedding.model, device=device)
+        # Embedder is initialized lazily (first indexing operation).
+        self._embedder = None
 
         self.batch_size = config.embedding.batch_size
         self.chunk_size = 1500
         self.chunk_overlap = 200
 
         self._ensure_directories()
+
+    def _get_embedder(self):
+        """Create and cache the embedding model on first use."""
+        if self._embedder is not None:
+            return self._embedder
+
+        # Check for GPU availability and warn if not using it
+        from searchat.gpu_check import check_and_warn_gpu
+
+        check_and_warn_gpu()
+
+        from sentence_transformers import SentenceTransformer
+
+        device = self.config.embedding.get_device()
+        logger.info(f"Initializing embedding model on device: {device}")
+        self._embedder = SentenceTransformer(self.config.embedding.model, device=device)
+        return self._embedder
     
     def _ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -389,7 +399,8 @@ class ConversationIndexer:
         all_embeddings = []
         for i in range(0, len(texts), self.batch_size):
             batch = texts[i:i + self.batch_size]
-            batch_embeddings = self.embedder.encode(
+            embedder = self._get_embedder()
+            batch_embeddings = embedder.encode(
                 batch,
                 batch_size=self.batch_size,
                 show_progress_bar=False,

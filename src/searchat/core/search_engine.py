@@ -9,7 +9,6 @@ import faiss
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
-from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 
 from searchat.models import (
@@ -58,6 +57,8 @@ class SearchEngine:
 
         # Initialize embedder with GPU if available
         device = self.config.embedding.get_device()
+        from sentence_transformers import SentenceTransformer
+
         self.embedder = SentenceTransformer(self.config.embedding.model, device=device)
 
         # Load parquet files into memory
