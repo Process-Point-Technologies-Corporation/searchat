@@ -1,7 +1,8 @@
 """Statistics endpoint - index statistics and metadata."""
+
 from fastapi import APIRouter
 
-from searchat.api.dependencies import get_search_engine
+import searchat.api.dependencies as deps
 
 
 router = APIRouter()
@@ -10,14 +11,15 @@ router = APIRouter()
 @router.get("/statistics")
 async def get_statistics():
     """Get search index statistics."""
-    search_engine = get_search_engine()
-    df = search_engine.conversations_df
-
-    return {
-        "total_conversations": len(df),
-        "total_messages": int(df['message_count'].sum()),
-        "avg_messages": float(df['message_count'].mean()),
-        "total_projects": int(df['project_id'].nunique()),
-        "earliest_date": df['created_at'].min().isoformat() if not df.empty else None,
-        "latest_date": df['updated_at'].max().isoformat() if not df.empty else None
-    }
+    if deps.stats_cache is None:
+        store = deps.get_duckdb_store()
+        stats = store.get_statistics()
+        deps.stats_cache = {
+            "total_conversations": stats.total_conversations,
+            "total_messages": stats.total_messages,
+            "avg_messages": stats.avg_messages,
+            "total_projects": stats.total_projects,
+            "earliest_date": stats.earliest_date,
+            "latest_date": stats.latest_date,
+        }
+    return deps.stats_cache

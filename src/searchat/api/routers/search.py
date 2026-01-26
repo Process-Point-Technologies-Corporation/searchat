@@ -3,10 +3,14 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Query, HTTPException
+from fastapi.responses import JSONResponse
 
 from searchat.models import SearchMode, SearchFilters
 from searchat.api.models import SearchResultResponse
-from searchat.api.dependencies import get_search_engine, projects_cache
+import searchat.api.dependencies as deps
+
+from searchat.api.dependencies import get_search_engine, trigger_search_engine_warmup
+from searchat.api.readiness import get_readiness, warming_payload, error_payload
 
 
 router = APIRouter()
@@ -25,6 +29,14 @@ async def search(
 ):
     """Search conversations with filters and sorting."""
     try:
+        readiness = get_readiness().snapshot()
+        engine_state = readiness.components.get("search_engine")
+        if engine_state == "error":
+            return JSONResponse(status_code=500, content=error_payload())
+        if engine_state != "ready":
+            trigger_search_engine_warmup()
+            return JSONResponse(status_code=503, content=warming_payload())
+
         search_engine = get_search_engine()
 
         # Convert mode string to SearchMode enum
@@ -104,11 +116,10 @@ async def search(
 
 
 @router.get("/projects")
-async def get_projects() -> List[str]:
+async def get_projects():
     """Get list of all projects in the index."""
-    global projects_cache
-    search_engine = get_search_engine()
+    store = deps.get_duckdb_store()
 
-    if projects_cache is None:
-        projects_cache = sorted(search_engine.conversations_df['project_id'].unique().tolist())
-    return projects_cache
+    if deps.projects_cache is None:
+        deps.projects_cache = store.list_projects()
+    return deps.projects_cache

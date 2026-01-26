@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import HTMLResponse
+from fastapi.responses import JSONResponse
 
 from searchat.api.models import (
     SearchResultResponse,
@@ -15,7 +16,8 @@ from searchat.api.models import (
     ConversationResponse,
     ResumeRequest,
 )
-from searchat.api.dependencies import get_search_engine, get_platform_manager
+from searchat.api.dependencies import get_search_engine, get_platform_manager, trigger_search_engine_warmup
+from searchat.api.readiness import get_readiness, warming_payload, error_payload
 
 
 router = APIRouter()
@@ -38,6 +40,14 @@ async def get_all_conversations(
 ):
     """Get all conversations with sorting and filtering."""
     try:
+        readiness = get_readiness().snapshot()
+        engine_state = readiness.components.get("search_engine")
+        if engine_state == "error":
+            return JSONResponse(status_code=500, content=error_payload())
+        if engine_state != "ready":
+            trigger_search_engine_warmup()
+            return JSONResponse(status_code=503, content=warming_payload())
+
         search_engine = get_search_engine()
         df = search_engine.conversations_df.copy()
 
@@ -111,9 +121,17 @@ async def get_all_conversations(
 
 
 @router.get("/conversation/{conversation_id}")
-async def get_conversation(conversation_id: str) -> ConversationResponse:
+async def get_conversation(conversation_id: str):
     """Get a specific conversation with all messages."""
     try:
+        readiness = get_readiness().snapshot()
+        engine_state = readiness.components.get("search_engine")
+        if engine_state == "error":
+            return JSONResponse(status_code=500, content=error_payload())
+        if engine_state != "ready":
+            trigger_search_engine_warmup()
+            return JSONResponse(status_code=503, content=warming_payload())
+
         search_engine = get_search_engine()
 
         # Find conversation in dataframe (O(1) index lookup)
@@ -194,6 +212,14 @@ async def get_conversation(conversation_id: str) -> ConversationResponse:
 async def resume_session(request: ResumeRequest):
     """Resume a conversation session in its original tool (Claude Code or Vibe)."""
     try:
+        readiness = get_readiness().snapshot()
+        engine_state = readiness.components.get("search_engine")
+        if engine_state == "error":
+            return JSONResponse(status_code=500, content=error_payload())
+        if engine_state != "ready":
+            trigger_search_engine_warmup()
+            return JSONResponse(status_code=503, content=warming_payload())
+
         search_engine = get_search_engine()
         platform_manager = get_platform_manager()
 
