@@ -1,14 +1,14 @@
+from __future__ import annotations
+
 import json
 import time
 import hashlib
 from collections import defaultdict, OrderedDict
 from pathlib import Path
-from typing import List, Optional, Dict, Tuple
+from typing import Any, List, Optional, Dict, Tuple, TYPE_CHECKING, cast
 import duckdb
 import faiss
 import numpy as np
-import pandas as pd
-import pyarrow.parquet as pq
 from rank_bm25 import BM25Okapi
 
 from searchat.models import (
@@ -16,30 +16,50 @@ from searchat.models import (
     SearchFilters,
     SearchResult,
     SearchResults,
-    ParsedQuery
 )
 from searchat.core.query_parser import QueryParser
 from searchat.config import Config
 
 
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
+
+
 class SearchEngine:
-    def __init__(self, search_dir: Path, config: Config = None):
+    def __init__(self, search_dir: Path, config: Config | None = None):
         self.search_dir = search_dir
         self.faiss_index: Optional[faiss.Index] = None
-        self.embedder: Optional[SentenceTransformer] = None
+        self.embedder: SentenceTransformer | None = None
         self.query_parser = QueryParser()
         
         if config is None:
             config = Config.load()
         self.config = config
         
-        self.conversations_dir = self.search_dir / 'data/conversations'
-        self.metadata_path = self.search_dir / 'data/indices/embeddings.metadata.parquet'
-        
+        self.conversations_dir = self.search_dir / "data" / "conversations"
+        self.metadata_path = self.search_dir / "data" / "indices" / "embeddings.metadata.parquet"
+        self.index_path = self.search_dir / "data" / "indices" / "embeddings.faiss"
+        self.conversations_glob = str(self.conversations_dir / "*.parquet")
+
         # LRU cache for search results
         self.cache_size = config.performance.query_cache_size
         self.result_cache: OrderedDict[str, Tuple[SearchResults, float]] = OrderedDict()
         self.cache_ttl = 300  # 5 minutes TTL
+
+        # Columns needed for search (exclude large 'messages' column)
+        self.search_columns = [
+            "conversation_id",
+            "project_id",
+            "file_path",
+            "title",
+            "created_at",
+            "updated_at",
+            "message_count",
+            "full_text",
+            "embedding_id",
+            "file_hash",
+            "indexed_at",
+        ]
         
         self._initialize()
     
@@ -48,12 +68,14 @@ class SearchEngine:
         
         if not self.metadata_path.exists():
             raise FileNotFoundError(f"Metadata parquet not found at {self.metadata_path}. Run indexer first.")
-        
-        index_path = self.search_dir / 'data/indices/embeddings.faiss'
-        if not index_path.exists():
-            raise FileNotFoundError(f"FAISS index not found at {index_path}. Run indexer first.")
-        
-        self.faiss_index = faiss.read_index(str(index_path))
+
+        if not self.index_path.exists():
+            raise FileNotFoundError(f"FAISS index not found at {self.index_path}. Run indexer first.")
+
+        if not self.conversations_dir.exists() or not any(self.conversations_dir.glob("*.parquet")):
+            raise FileNotFoundError(f"No conversation parquet files found in {self.conversations_dir}")
+
+        self.faiss_index = faiss.read_index(str(self.index_path))
 
         # Initialize embedder with GPU if available
         device = self.config.embedding.get_device()
@@ -61,26 +83,47 @@ class SearchEngine:
 
         self.embedder = SentenceTransformer(self.config.embedding.model, device=device)
 
-        # Load parquet files into memory
-        self.metadata_df = pq.read_table(self.metadata_path).to_pandas()
+        # IMPORTANT: do not load parquet into memory at init. Use DuckDB-on-demand.
 
-        # Store parquet file paths for predicate pushdown queries
-        self.conv_parquet_files = list(self.conversations_dir.glob('*.parquet'))
-        if not self.conv_parquet_files:
-            raise FileNotFoundError(f"No conversation parquet files found in {self.conversations_dir}")
+    def _connect(self):
+        con = duckdb.connect(database=":memory:")
+        # Keep this conservative; avoid forcing a value if config is missing.
+        try:
+            mem_mb = int(self.config.performance.memory_limit_mb)
+            con.execute(f"PRAGMA memory_limit='{mem_mb}MB'")
+        except Exception:
+            pass
+        return con
 
-        # Define columns needed for search (exclude large 'messages' column)
-        self.search_columns = [
-            'conversation_id', 'project_id', 'file_path', 'title',
-            'created_at', 'updated_at', 'message_count', 'full_text',
-            'embedding_id', 'file_hash', 'indexed_at'
-        ]
+    def _where_from_filters(
+        self,
+        filters: Optional[SearchFilters],
+        params: list[object],
+        *,
+        table_alias: str = "",
+    ) -> str:
+        prefix = f"{table_alias}." if table_alias else ""
+        conditions = [f"{prefix}message_count > 0"]
 
-        # Load conversations into memory with projection (exclude messages column)
-        conv_tables = [pq.read_table(f, columns=self.search_columns) for f in self.conv_parquet_files]
-        self.conversations_df = pd.concat([t.to_pandas() for t in conv_tables], ignore_index=True)
-        # Add conversation_id index for O(1) lookups
-        self.conversations_df = self.conversations_df.set_index('conversation_id', drop=False)
+        if filters:
+            if filters.project_ids:
+                placeholders = ",".join(["?"] * len(filters.project_ids))
+                conditions.append(f"{prefix}project_id IN ({placeholders})")
+                params.extend(filters.project_ids)
+
+            if filters.date_from:
+                conditions.append(f"{prefix}updated_at >= ?")
+                params.append(filters.date_from)
+
+            if filters.date_to:
+                conditions.append(f"{prefix}updated_at <= ?")
+                params.append(filters.date_to)
+
+            if filters.min_messages > 0:
+                conditions.append(f"{prefix}message_count >= ?")
+                params.append(int(filters.min_messages))
+
+        return " AND ".join(conditions)
     
     def _validate_index_metadata(self) -> None:
         metadata_path = self.search_dir / 'data/indices/index_metadata.json'
@@ -151,6 +194,10 @@ class SearchEngine:
         filters: Optional[SearchFilters] = None
     ) -> SearchResults:
         start_time = time.time()
+
+        # Treat wildcard query as keyword-only browsing.
+        if query.strip() == "*" and mode != SearchMode.KEYWORD:
+            mode = SearchMode.KEYWORD
         
         # Check cache first
         cache_key = self._get_cache_key(query, mode, filters)
@@ -189,41 +236,96 @@ class SearchEngine:
     def _keyword_search(self, query: str, filters: Optional[SearchFilters]) -> List[SearchResult]:
         parsed = self.query_parser.parse(query)
 
-        # Apply filters (including the 0-message filter) - creates new DataFrame
-        df = self._apply_filters(self.conversations_df, filters)
-        df = df.reset_index(drop=True)
-        
-        # Apply search terms
-        mask = pd.Series([True] * len(df), index=df.index)
-        
-        if parsed.exact_phrases:
+        # Treat '*' as "no text query" for filter-only browsing.
+        is_wildcard = parsed.original.strip() == "*"
+
+        params: list[object] = [self.conversations_glob]
+        where_clause = self._where_from_filters(filters, params)
+
+        text_conditions = []
+
+        if not is_wildcard:
             for phrase in parsed.exact_phrases:
-                mask &= df['full_text'].str.contains(phrase, case=False, regex=False, na=False)
-        
-        if parsed.must_include:
+                text_conditions.append("full_text ILIKE '%' || ? || '%'")
+                params.append(phrase)
+
             for term in parsed.must_include:
-                mask &= df['full_text'].str.contains(term, case=False, regex=False, na=False)
-        
-        # For multiple words, require ALL words to be present (AND logic by default)
-        if parsed.should_include:
+                text_conditions.append("full_text ILIKE '%' || ? || '%'")
+                params.append(term)
+
             for term in parsed.should_include:
-                # Clean up any stray quotes that might have slipped through
                 clean_term = term.strip("'\"")
-                if clean_term:  # Only search for non-empty terms
-                    mask &= df['full_text'].str.contains(clean_term, case=False, regex=False, na=False)
-        
-        if parsed.must_exclude:
+                if clean_term:
+                    text_conditions.append("full_text ILIKE '%' || ? || '%'")
+                    params.append(clean_term)
+
             for term in parsed.must_exclude:
-                mask &= ~df['full_text'].str.contains(term, case=False, regex=False, na=False)
+                text_conditions.append("NOT (full_text ILIKE '%' || ? || '%')")
+                params.append(term)
 
-        results = df[mask]
+        if text_conditions:
+            where_clause = f"{where_clause} AND " + " AND ".join(text_conditions)
 
-        if results.empty:
+        # Cap candidates to keep worst-case queries bounded.
+        candidate_limit = 5000
+        params.append(candidate_limit)
+
+        con = self._connect()
+        try:
+            sql = f"""
+            SELECT
+              conversation_id,
+              project_id,
+              title,
+              created_at,
+              updated_at,
+              message_count,
+              file_path,
+              full_text
+            FROM parquet_scan(?)
+            WHERE {where_clause}
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """
+
+            rows = con.execute(sql, params).fetchall()
+        finally:
+            con.close()
+
+        if not rows:
             return []
 
-        # Use BM25 for scoring (industry standard, much faster than hand-rolled)
-        # Tokenize documents
-        corpus = [doc.lower().split() for doc in results['full_text'].tolist()]
+        # Wildcard query: return most-recent conversations with a neutral score.
+        if is_wildcard:
+            search_results = []
+            for (
+                conversation_id,
+                project_id,
+                title,
+                created_at,
+                updated_at,
+                message_count,
+                file_path,
+                full_text,
+            ) in rows[:100]:
+                search_results.append(
+                    SearchResult(
+                        conversation_id=conversation_id,
+                        project_id=project_id,
+                        title=title,
+                        created_at=created_at,
+                        updated_at=updated_at,
+                        message_count=message_count,
+                        file_path=file_path,
+                        score=0.0,
+                        snippet=(full_text or "")[:200],
+                    )
+                )
+            return search_results
+
+        # Use BM25 for scoring (industry standard)
+        docs = [r[7] or "" for r in rows]
+        corpus = [doc.lower().split() for doc in docs]
         bm25 = BM25Okapi(corpus)
 
         # Tokenize query (combine all search terms)
@@ -233,122 +335,152 @@ class SearchEngine:
         # Calculate BM25 scores
         bm25_scores = bm25.get_scores(query_tokens)
 
-        # Title boost: multiply score by 2 if any query term appears in title
-        title_boost = results['title'].str.lower().apply(
-            lambda title: 2.0 if any(term.lower() in title for term in all_terms) else 1.0
-        ).values
+        all_terms_lower = [t.lower() for t in all_terms]
 
-        # Message count boost: log scaling
-        message_boost = np.log1p(results['message_count'].values)
+        scored = []
+        for idx, row in enumerate(rows):
+            title = row[2] or ""
+            title_l = title.lower()
+            title_boost = 2.0 if any(term in title_l for term in all_terms_lower) else 1.0
+            message_boost = float(np.log1p(row[5]))
+            score = float(bm25_scores[idx]) * title_boost * message_boost
+            scored.append((score, row))
 
-        # Combined score
-        results['relevance_score'] = bm25_scores * title_boost * message_boost
+        scored.sort(key=lambda x: x[0], reverse=True)
 
-        results = results.sort_values('relevance_score', ascending=False)
-
-        # Vectorized result conversion
-        top_results = results.head(100)
-        search_results = [
-            SearchResult(
-                conversation_id=row['conversation_id'],
-                project_id=row['project_id'],
-                title=row['title'],
-                created_at=row['created_at'],
-                updated_at=row['updated_at'],
-                message_count=row['message_count'],
-                file_path=row['file_path'],
-                score=float(row['relevance_score']),
-                snippet=self._create_snippet(row['full_text'], parsed.original)
+        search_results = []
+        for score, row in scored[:100]:
+            (
+                conversation_id,
+                project_id,
+                title,
+                created_at,
+                updated_at,
+                message_count,
+                file_path,
+                full_text,
+            ) = row
+            search_results.append(
+                SearchResult(
+                    conversation_id=conversation_id,
+                    project_id=project_id,
+                    title=title,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                    message_count=message_count,
+                    file_path=file_path,
+                    score=score,
+                    snippet=self._create_snippet(full_text or "", parsed.original),
+                )
             )
-            for row in top_results.to_dict('records')
-        ]
 
         return search_results
     
     def _semantic_search(self, query: str, filters: Optional[SearchFilters]) -> List[SearchResult]:
-        query_embedding = self.embedder.encode(query)
-        
-        distances, indices = self.faiss_index.search(
-            query_embedding.reshape(1, -1).astype(np.float32), 
-            k=100
-        )
-        
-        vector_ids = indices[0].tolist()
-        vector_ids_filtered = [v for v in vector_ids if v >= 0]
-        
-        if not vector_ids_filtered:
-            return []
-        
-        # Filter metadata by vector IDs
-        metadata_matches = self.metadata_df[self.metadata_df['vector_id'].isin(vector_ids_filtered)]
+        embedder = self.embedder
+        faiss_index = self.faiss_index
+        if embedder is None or faiss_index is None:
+            raise RuntimeError("Search engine not initialized")
 
-        if metadata_matches.empty:
-            return []
-
-        # Join with conversations (handle overlapping columns)
-        # Select only needed columns from conversations to avoid collisions
-        # Use reset_index() to access both index and columns without ambiguity
-        conv_df_for_merge = self.conversations_df.reset_index(drop=True).copy()
-        conv_cols = ['conversation_id', 'project_id', 'title', 'created_at', 'updated_at',
-                     'message_count', 'file_path', 'full_text']
-        results = metadata_matches.merge(
-            conv_df_for_merge[conv_cols],
-            on='conversation_id',
-            how='inner',
-            suffixes=('', '_conv')
-        )
+        query_embedding = np.asarray(embedder.encode(query), dtype=np.float32)
         
-        # Apply filters (including the 0-message filter)
-        results = self._apply_filters(results, filters)
+        k = 100
+        faiss_index_any = cast(Any, faiss_index)
+        distances = np.empty((1, k), dtype=np.float32)
+        labels = np.empty((1, k), dtype=np.int64)
+        faiss_index_any.search(query_embedding.reshape(1, -1), k, distances, labels)
         
-        if results.empty:
-            return []
-        
-        # Build results maintaining FAISS order with single merge (not N+1 loop)
-        # Create DataFrame with vector_id, distance, and FAISS order
-        valid_mask = indices[0] >= 0
-        vector_scores = pd.DataFrame({
-            'vector_id': indices[0][valid_mask],
-            'distance': distances[0][valid_mask],
-            'faiss_order': np.arange(len(indices[0]))[valid_mask]
-        })
+        valid_mask = labels[0] >= 0
+        hits = []
+        for vector_id, distance, order in zip(labels[0][valid_mask], distances[0][valid_mask], np.arange(len(labels[0]))[valid_mask]):
+            hits.append((int(vector_id), float(distance), int(order)))
 
-        # Single merge instead of N lookups
-        results_with_scores = results.merge(vector_scores, on='vector_id', how='inner')
-
-        if results_with_scores.empty:
+        if not hits:
             return []
 
-        # Sort by FAISS order, then deduplicate by conversation
-        results_with_scores = results_with_scores.sort_values('faiss_order')
-        results_with_scores = results_with_scores.drop_duplicates(subset=['conversation_id'], keep='first')
+        values_clause = ", ".join(["(?, ?, ?)"] * len(hits))
+        params: list[object] = []
+        for vector_id, distance, order in hits:
+            params.extend([vector_id, distance, order])
 
-        # Calculate scores and build search results
+        # Metadata parquet scan, then conversations parquet scan
+        params.append(str(self.metadata_path))
+        params.append(self.conversations_glob)
+
+        filter_params: list[object] = []
+        where_clause = self._where_from_filters(filters, filter_params, table_alias="c")
+        params.extend(filter_params)
+
+        con = self._connect()
+        try:
+            sql = f"""
+            WITH hits(vector_id, distance, faiss_order) AS (
+              VALUES {values_clause}
+            )
+            SELECT
+              m.conversation_id,
+              c.project_id,
+              c.title,
+              c.created_at,
+              c.updated_at,
+              c.message_count,
+              c.file_path,
+              m.chunk_text,
+              m.message_start_index,
+              m.message_end_index,
+              hits.distance,
+              hits.faiss_order
+            FROM hits
+            JOIN parquet_scan(?) AS m
+              ON m.vector_id = hits.vector_id
+            JOIN parquet_scan(?) AS c
+              ON c.conversation_id = m.conversation_id
+            WHERE {where_clause}
+            QUALIFY row_number() OVER (PARTITION BY m.conversation_id ORDER BY hits.faiss_order) = 1
+            ORDER BY hits.faiss_order
+            """
+            rows = con.execute(sql, params).fetchall()
+        finally:
+            con.close()
+
+        if not rows:
+            return []
+
         search_results = []
-        for row in results_with_scores.to_dict('records'):
-            score = 1.0 / (1.0 + float(row['distance']))
+        for (
+            conversation_id,
+            project_id,
+            title,
+            created_at,
+            updated_at,
+            message_count,
+            file_path,
+            chunk_text,
+            message_start_index,
+            message_end_index,
+            distance,
+            _faiss_order,
+        ) in rows:
+            score = 1.0 / (1.0 + float(distance))
+            snippet_text = chunk_text or ""
+            snippet = snippet_text[:300] + ("..." if len(snippet_text) > 300 else "")
 
-            try:
-                snippet = row['chunk_text'][:300] + "..." if len(row['chunk_text']) > 300 else row['chunk_text']
-            except KeyError as e:
-                available_cols = list(row.keys())
-                raise RuntimeError(f"Missing column 'chunk_text'. Available columns: {available_cols}. Vector ID: {row['vector_id']}") from e
+            search_results.append(
+                SearchResult(
+                    conversation_id=conversation_id,
+                    project_id=project_id,
+                    title=title,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                    message_count=message_count,
+                    file_path=file_path,
+                    score=score,
+                    snippet=snippet,
+                    message_start_index=int(message_start_index),
+                    message_end_index=int(message_end_index),
+                )
+            )
 
-            # Columns from metadata keep original names, conv columns get _conv suffix
-            search_results.append(SearchResult(
-                conversation_id=row['conversation_id'],
-                project_id=row['project_id_conv'],
-                title=row['title'],
-                created_at=row['created_at_conv'],
-                updated_at=row['updated_at'],
-                message_count=row['message_count'],
-                file_path=row['file_path'],
-                score=score,
-                snippet=snippet,
-                message_start_index=int(row['message_start_index']),
-                message_end_index=int(row['message_end_index'])
-                ))
-        
         return search_results
     
     def _merge_results(
@@ -406,74 +538,6 @@ class SearchEngine:
             merged.append(result)
         
         return merged
-    
-    def _query_with_predicate_pushdown(self, filters: Optional[SearchFilters]) -> pd.DataFrame:
-        """
-        Query parquet files with predicate and projection pushdown using DuckDB.
-        - Predicate pushdown: Filters applied at parquet layer
-        - Projection pushdown: Only load needed columns
-        """
-        # Build WHERE clause conditions
-        conditions = ["message_count > 0"]  # Always exclude 0-message conversations
-
-        if filters:
-            if filters.project_ids:
-                # Use IN clause for project filtering
-                project_list = ", ".join([f"'{p}'" for p in filters.project_ids])
-                conditions.append(f"project_id IN ({project_list})")
-
-            if filters.date_from:
-                conditions.append(f"updated_at >= '{filters.date_from.isoformat()}'")
-
-            if filters.date_to:
-                conditions.append(f"updated_at <= '{filters.date_to.isoformat()}'")
-
-            if filters.min_messages > 0:
-                conditions.append(f"message_count >= {filters.min_messages}")
-
-        where_clause = " AND ".join(conditions)
-
-        # Build column list (exclude large 'messages' column)
-        columns = ", ".join(self.search_columns)
-
-        # Build SQL query with both predicate and projection pushdown
-        parquet_pattern = str(self.conversations_dir / '*.parquet').replace('\\', '/')
-        query = f"""
-            SELECT {columns}
-            FROM read_parquet('{parquet_pattern}')
-            WHERE {where_clause}
-        """
-
-        # Execute query with DuckDB (only loads matching rows + needed columns)
-        result_df = duckdb.query(query).to_df()
-
-        # Set conversation_id as index for O(1) lookups
-        if not result_df.empty:
-            result_df = result_df.set_index('conversation_id', drop=False)
-
-        return result_df
-
-    def _apply_filters(self, df: pd.DataFrame, filters: SearchFilters) -> pd.DataFrame:
-        """
-        Apply search filters to a DataFrame.
-        Uses predicate pushdown when filters present for better performance.
-        """
-        # If filters are present, use predicate pushdown for efficiency
-        has_filters = (
-            filters and (
-                filters.project_ids or
-                filters.date_from or
-                filters.date_to or
-                filters.min_messages > 0
-            )
-        )
-
-        if has_filters:
-            # Use DuckDB predicate pushdown - only loads matching rows
-            return self._query_with_predicate_pushdown(filters)
-        else:
-            # No filters except message_count > 0, filter in-memory
-            return df[df['message_count'] > 0]
     
     def _create_snippet(self, full_text: str, query: str, length: int = 200) -> str:
         text_lower = full_text.lower()
