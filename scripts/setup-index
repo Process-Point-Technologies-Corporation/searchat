@@ -14,11 +14,11 @@ Options:
 """
 
 import sys
-from pathlib import Path
+
 from searchat.config import Config, PathResolver
+from searchat.core.indexer import ConversationIndexer
 from searchat.core.logging_config import setup_logging
 from searchat.core.progress import create_progress
-from searchat.core.indexer import ConversationIndexer
 
 
 def main():

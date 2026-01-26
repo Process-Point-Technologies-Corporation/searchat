@@ -10,7 +10,7 @@ import shutil
 from pathlib import Path
 from typing import Optional, List
 
-from .constants import (
+from searchat.config.constants import (
     DEFAULT_DATA_DIR,
     DEFAULT_CONFIG_SUBDIR,
     DEFAULT_DATA_SUBDIR,
@@ -21,7 +21,7 @@ from .constants import (
     CLAUDE_DIR_NAME,
     CLAUDE_PROJECTS_SUBDIR,
 )
-from .path_resolver import PathResolver
+from searchat.config import PathResolver
 
 
 class SetupManager:
