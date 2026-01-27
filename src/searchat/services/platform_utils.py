@@ -39,7 +39,7 @@ class PlatformManager:
         if not cwd:
             return None
 
-        from .path_resolver import PathResolver
+        from searchat.config.path_resolver import PathResolver
 
         # Check if translation is needed
         if self.is_windows:
