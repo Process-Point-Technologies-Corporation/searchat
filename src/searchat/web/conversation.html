@@ -194,6 +194,31 @@
             background: var(--danger);
         }
 
+        /* Action buttons container */
+        .header-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+
+        .download-btn {
+            font-family: 'Space Grotesk', sans-serif;
+            padding: 8px 14px;
+            background: var(--accent-secondary);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .download-btn:hover {
+            background: var(--accent-primary);
+        }
+
         .loading {
             text-align: center;
             padding: 40px;
@@ -244,6 +269,9 @@
         // Extract conversation ID from URL path
         const conversationId = window.location.pathname.split('/conversation/')[1];
 
+        // Store conversation data globally for download functions
+        let conversationData = null;
+
         async function loadConversation() {
             const div = document.getElementById('conversation');
 
@@ -275,6 +303,9 @@
                     throw new Error('Invalid response data');
                 }
 
+                // Store for download functions
+                conversationData = data;
+
                 // Detect tool from file_path
                 const tool = data.file_path.endsWith('.jsonl') ? 'claude' : 'vibe';
                 const toolLabel = tool === 'claude' ? 'Claude Code' : 'Vibe';
@@ -284,16 +315,20 @@
                         <span class="tool-badge ${tool}">${toolLabel}</span>
                         <h2>${data.title || 'No title available'}</h2>
                         <div>Project: ${data.project_id || 'Unknown'} | Messages: ${data.message_count || 0}</div>
-                        <button class="resume-btn" id="resumeBtn">
-                            Resume Session
-                        </button>
+                        <div class="header-actions">
+                            <button class="resume-btn" id="resumeBtn">Resume Session</button>
+                            <button class="download-btn" id="downloadTxt">Download TXT</button>
+                            <button class="download-btn" id="downloadHtml">Download HTML</button>
+                        </div>
                     </div>
                 `;
 
-                // Add resume button handler
+                // Add button handlers
                 document.getElementById('resumeBtn').addEventListener('click', function() {
                     resumeSession(conversationId, this);
                 });
+                document.getElementById('downloadTxt').addEventListener('click', downloadAsTxt);
+                document.getElementById('downloadHtml').addEventListener('click', downloadAsHtml);
 
                 if (data.messages && Array.isArray(data.messages)) {
                     data.messages.forEach((msg, i) => {
@@ -366,6 +401,85 @@
                     buttonElement.disabled = false;
                 }, 3000);
             }
+        }
+
+        function downloadAsTxt() {
+            if (!conversationData) return;
+
+            const lines = [];
+            lines.push(`Title: ${conversationData.title || 'Untitled'}`);
+            lines.push(`Project: ${conversationData.project_id || 'Unknown'}`);
+            lines.push(`Messages: ${conversationData.message_count || 0}`);
+            lines.push(`Conversation ID: ${conversationId}`);
+            lines.push('');
+            lines.push('='.repeat(80));
+            lines.push('');
+
+            if (conversationData.messages) {
+                conversationData.messages.forEach((msg, i) => {
+                    const role = (msg.role || 'unknown').toUpperCase();
+                    lines.push(`[${role}] Message ${i + 1}`);
+                    lines.push('-'.repeat(40));
+                    lines.push(msg.content || '');
+                    lines.push('');
+                });
+            }
+
+            const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `conversation-${conversationId.slice(-8)}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function downloadAsHtml() {
+            if (!conversationData) return;
+
+            const messages = (conversationData.messages || []).map((msg, i) => {
+                const role = (msg.role || 'unknown');
+                const roleUpper = role.toUpperCase();
+                const bgColor = role === 'user' ? '#e8f5e9' : '#e3f2fd';
+                const borderColor = role === 'user' ? '#4caf50' : '#2196f3';
+                const content = escapeHtml(msg.content || '').replace(/\n/g, '<br>');
+                return `
+                    <div style="background: ${bgColor}; border-left: 3px solid ${borderColor}; padding: 15px; margin: 15px 0; border-radius: 4px;">
+                        <div style="font-weight: bold; margin-bottom: 10px; color: #333;">${roleUpper} - Message ${i + 1}</div>
+                        <div style="white-space: pre-wrap; font-family: inherit;">${content}</div>
+                    </div>
+                `;
+            }).join('');
+
+            const html = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>${escapeHtml(conversationData.title || 'Conversation')}</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; line-height: 1.6; }
+        h1 { color: #333; border-bottom: 2px solid #2196f3; padding-bottom: 10px; }
+        .meta { color: #666; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <h1>${escapeHtml(conversationData.title || 'Untitled Conversation')}</h1>
+    <div class="meta">
+        <strong>Project:</strong> ${escapeHtml(conversationData.project_id || 'Unknown')} |
+        <strong>Messages:</strong> ${conversationData.message_count || 0} |
+        <strong>ID:</strong> ${escapeHtml(conversationId)}
+    </div>
+    ${messages}
+</body>
+</html>`;
+
+            const blob = new Blob([html], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `conversation-${conversationId.slice(-8)}.html`;
+            a.click();
+            URL.revokeObjectURL(url);
         }
 
         loadConversation();
