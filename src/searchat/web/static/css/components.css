@@ -37,6 +37,8 @@
 .sidebar .tip-content {
     color: var(--text-muted);
     font-size: 14px;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
 }
 
 .sidebar code {
@@ -45,7 +47,11 @@
     padding: 2px 6px;
     border-radius: 3px;
     color: var(--accent-primary);
-    font-size: 13px;
+    font-size: 12px;
+    word-break: break-all;
+    overflow-wrap: break-word;
+    display: inline-block;
+    max-width: 100%;
 }
 
 .sidebar kbd {
@@ -295,6 +301,53 @@
     color: var(--text-muted);
     font-size: 16px;
     padding: 40px 20px;
+}
+
+/* Notification Messages */
+.notification {
+    padding: 15px;
+    border-radius: 6px;
+    border-left: 4px solid;
+}
+
+.notification-success {
+    background: #d4edda;
+    border-left-color: #28a745;
+    color: #155724;
+}
+
+.notification-info {
+    background: #d1ecf1;
+    border-left-color: #17a2b8;
+    color: #0c5460;
+}
+
+.notification-warning {
+    background: #fff3cd;
+    border-left-color: #ffc107;
+    color: #856404;
+}
+
+.notification-error {
+    background: #f8d7da;
+    border-left-color: #dc3545;
+    color: #721c24;
+}
+
+.notification strong {
+    font-size: 16px;
+}
+
+.notification .notification-details {
+    margin-top: 10px;
+    color: inherit;
+    opacity: 0.9;
+}
+
+.notification .notification-hint {
+    margin-top: 10px;
+    font-size: 13px;
+    opacity: 0.8;
 }
 
 /* Theme Toggle */

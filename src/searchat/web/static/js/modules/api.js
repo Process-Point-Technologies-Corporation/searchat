@@ -27,38 +27,36 @@ export async function indexMissing() {
 
         if (data.success) {
             const failedInfo = data.failed_conversations > 0
-                ? ` | <span style="color: #d32f2f; font-weight: 700;">⚠ ${data.failed_conversations} failed</span>`
+                ? ` | <strong style="color: #721c24;">${data.failed_conversations} failed</strong>`
                 : '';
 
             if (data.new_conversations === 0) {
-                const bgColor = data.failed_conversations > 0 ? '#fff3e0' : '#e3f2fd';
-                const borderColor = data.failed_conversations > 0 ? '#ff9800' : '#2196f3';
+                const notifClass = data.failed_conversations > 0 ? 'notification-warning' : 'notification-info';
                 const statusText = data.failed_conversations > 0
-                    ? `✓ All valid conversations indexed (${data.failed_conversations} corrupt files skipped)`
-                    : '✓ All conversations are already indexed';
+                    ? `All valid conversations indexed (${data.failed_conversations} corrupt files skipped)`
+                    : 'All conversations are already indexed';
 
                 resultsDiv.innerHTML = `
-                    <div class="results-header" style="background: ${bgColor}; padding: 15px; color: #000; border-left: 4px solid ${borderColor};">
-                        <strong style="font-size: 16px;">${statusText}</strong>
-                        <div style="margin-top: 10px;">
+                    <div class="notification ${notifClass}">
+                        <strong>${statusText}</strong>
+                        <div class="notification-details">
                             <strong>Total files:</strong> ${data.total_files} | <strong>Already indexed:</strong> ${data.already_indexed}${failedInfo}
                         </div>
-                        <div style="margin-top: 10px; font-size: 13px; color: #555;">
+                        <div class="notification-hint">
                             The live file watcher will automatically index new conversations as you create them.
                         </div>
                     </div>
                 `;
             } else {
-                const bgColor = data.failed_conversations > 0 ? '#fff3e0' : '#e3f2fd';
-                const borderColor = data.failed_conversations > 0 ? '#ff9800' : '#2196f3';
+                const notifClass = data.failed_conversations > 0 ? 'notification-warning' : 'notification-success';
 
                 resultsDiv.innerHTML = `
-                    <div class="results-header" style="background: ${bgColor}; padding: 15px; color: #000; border-left: 4px solid ${borderColor};">
-                        <strong style="font-size: 16px;">✓ Added ${data.new_conversations} conversations to index</strong>
-                        <div style="margin-top: 10px;">
+                    <div class="notification ${notifClass}">
+                        <strong>Added ${data.new_conversations} conversations to index</strong>
+                        <div class="notification-details">
                             <strong>Total files:</strong> ${data.total_files} | <strong>Previously indexed:</strong> ${data.already_indexed} | <strong>Time:</strong> ${data.time_seconds}s${failedInfo}
                         </div>
-                        <div style="margin-top: 10px; font-size: 13px; color: #555;">
+                        <div class="notification-hint">
                             Your new conversations are now searchable!
                         </div>
                     </div>
@@ -70,7 +68,7 @@ export async function indexMissing() {
                 await loadProjects();
             }
         } else {
-            resultsDiv.innerHTML = '<div style="color: #f44336;">Indexing failed</div>';
+            resultsDiv.innerHTML = '<div class="notification notification-error"><strong>Indexing failed</strong></div>';
         }
     } catch (error) {
         resultsDiv.innerHTML = `<div style="color: #f44336;">Error: ${error.message}</div>`;
