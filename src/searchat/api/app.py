@@ -45,6 +45,9 @@ from searchat.config.constants import (
 _HTML_PATH = Path(__file__).parent.parent / "web" / "index.html"
 _CACHED_HTML = _HTML_PATH.read_text(encoding='utf-8')
 
+_CONVERSATION_HTML_PATH = Path(__file__).parent.parent / "web" / "conversation.html"
+_CACHED_CONVERSATION_HTML = _CONVERSATION_HTML_PATH.read_text(encoding='utf-8')
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -163,8 +166,7 @@ async def root():
 @app.get("/conversation/{conversation_id}", response_class=HTMLResponse)
 async def serve_conversation_page(conversation_id: str):
     """Serve HTML page for viewing a specific conversation."""
-    # For now, serve the same main page (it handles conversation viewing via client-side routing)
-    return HTMLResponse(_CACHED_HTML)
+    return HTMLResponse(_CACHED_CONVERSATION_HTML)
 
 
 def main():
