@@ -1,5 +1,11 @@
 # Searchat
 
+> [!NOTE]
+> **Next version in progress.** Searchat v2 is under active development. The current release remains functional but the upcoming version includes significant changes. Watch this repo or check back for the release.
+
+[![Built with Claude Code](https://img.shields.io/badge/Built_with-Claude_Code-D97757?logo=claude&logoColor=fff)](https://claude.ai/code)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Semantic search for AI coding agent conversations. Find past solutions by meaning, not just keywords.
 
 ## Supported Agents
