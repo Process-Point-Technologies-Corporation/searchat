@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 446 68" role="img" aria-label="searchat">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#3B82F6"/>
+      <stop offset="100%" stop-color="#EA580C"/>
+    </linearGradient>
+  </defs>
+  <path d="M10,10 L58,10 L58,15 Q58,19,54,19 L19,19 L19,25 Q19,29,23,29 L58,29 L58,58 L10,58 L10,53 Q10,49,14,49 L49,49 L49,42 Q49,38,45,38 L10,38 Z" fill="#3B82F6" fill-rule="evenodd"/>
+  <path d="M64,10h9v48h-9Z M64,10h48v9h-48Z M73,29h30v9h-30Z M64,49h48v9h-48Z" fill="#3B82F6"/>
+  <path d="M118,58 L142,10 L166,58 Z M137,40 L142,30 L147,40 Z M133,49 L151,49 L156,58 L128,58 Z" fill="#3B82F6" fill-rule="evenodd"/>
+  <path d="M172,10 L220,10 L220,58 L211,58 L211,38 L181,38 L181,58 L172,58 Z M181,19 L207,19 Q211,19,211,23 L211,25 Q211,29,207,29 L181,29 Z" fill="#3B82F6" fill-rule="evenodd"/>
+  <path d="M226,10 L274,10 L274,15 Q274,19,270,19 L235,19 L235,49 L270,49 Q274,49,274,53 L274,58 L226,58 Z" fill="url(#g)" fill-rule="evenodd"/>
+  <path d="M280,10h9v48h-9Z M319,10h9v48h-9Z M289,29h30v9h-30Z" fill="url(#g)"/>
+  <path d="M334,58 L358,10 L382,58 Z M353,40 L358,30 L363,40 Z M349,49 L367,49 L372,58 L344,58 Z" fill="#EA580C" fill-rule="evenodd"/>
+  <path d="M388,10h48v9h-48Z M407,19h9v39h-9Z" fill="#EA580C"/>
+</svg>
