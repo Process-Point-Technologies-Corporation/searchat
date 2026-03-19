@@ -20,9 +20,47 @@ reindex_on_modification = true
 modification_debounce_minutes = 5
 
 [search]
-default_mode = "hybrid"
+default_mode = "cross-layer"
 max_results = 100
 snippet_length = 200
+
+[search.ranking]
+# Unified two-layer search ranking parameters
+# Results appearing in both palace and verbatim layers get boosted by this percentage
+# 0.2 = 20% boost, 0.5 = 50% boost, etc.
+intersection_boost = 0.2
+# Weight for palace layer (distilled summaries, room metadata)
+palace_weight = 0.5
+# Weight for verbatim layer (raw message content)
+verbatim_weight = 0.5
+
+# Retrieval Fusion Tuning Parameters
+# These control how BM25 keyword and FAISS semantic signals are fused
+
+# Fusion weights (should sum to 1.0 for interpretability)
+# Balance BM25 and semantic signals in verbatim fusion.
+keyword_weight = 0.6  # Weight for BM25 keyword results
+semantic_weight = 0.4  # Weight for FAISS semantic results
+
+# Rank decay: controls how quickly scores drop by rank position
+# Formula: rank_weight = 1 / (1 + rank_decay * rank)
+# Lower values = flatter decay (more weight to lower-ranked results)
+# Higher values = steeper decay (top results dominate)
+rank_decay = 0.1  # Controls how quickly lower-ranked results lose weight
+
+# Title boost: multiplier when query terms appear in conversation title
+title_boost = 2.0
+
+# BM25 parameters (Okapi BM25)
+# k1: term frequency saturation (1.2-2.0 typical, higher = more TF weight)
+# b: document length normalization (0.0-1.0, higher = more length penalty)
+# BM25 defaults for term frequency and document-length normalization.
+bm25_k1 = 1.5
+bm25_b = 0.75
+
+# Retrieval counts
+bm25_candidates = 500  # BM25 candidates before filtering
+faiss_k = 100  # FAISS nearest neighbors to retrieve
 
 [embedding]
 model = "all-MiniLM-L6-v2"
@@ -45,3 +83,55 @@ highlight_color = "#FFEB3B"
 memory_limit_mb = 3000
 query_cache_size = 100
 enable_profiling = false
+# Startup warmup mode:
+#   "none"     - skip background warmup entirely
+#   "keyword"  - warm verbatim-only search path without loading embeddings
+#   "semantic" - warm distilled semantic search paths (loads embedding model)
+startup_warmup_mode = "keyword"
+
+[distillation]
+provider = "auto"
+cli_model = "claude-haiku-4-5-20251001"
+batch_size = 10
+max_ply_length = 20
+min_exchange_chars = 50
+
+# Per-turn hook prompt (simple, fast, for real-time distillation on each stop)
+# Variables: {user_text}, {assistant_text}
+# Outputs: exchange_core, specific_context, tags (no room_assignments)
+perturn_prompt = """Distill this conversation exchange into JSON:
+
+- "exchange_core": 1-2 sentences. What was accomplished or decided? Use specific terms from the text.
+- "specific_context": One concrete detail: number, error message, parameter, or file path. Copy exactly.
+- "tags": 2-4 keywords for retrieval (lowercase, underscore-separated).
+
+User: {user_text}
+Assistant: {assistant_text}
+
+Respond with ONLY valid JSON."""
+
+# Batch distillation prompt (comprehensive, for batch processing with room assignments)
+# Variables: {project_id}, {ply_start}, {ply_end}, {messages_text}
+#
+#   exchange_core  = "git commit message" — what was accomplished, in surviving vocabulary
+#   specific_context = the disambiguator — the detail that triggers "yes, that one"
+#   room_assignments = 1-3 topic rooms, specific enough to group related exchanges
+#   files_touched is NOT produced by the LLM (regex-extracted separately in distiller.py)
+prompt = """Distill this conversation exchange into JSON:
+
+- "exchange_core": 1-2 sentences. What was accomplished or decided? Use the specific terms from the exchange. Do not invent details not present in the text. If the exchange is mostly empty, say so briefly.
+- "specific_context": One concrete detail from the text: a number, error message, parameter name, or file path. Copy it exactly from the text. Do not use the project path.
+- "room_assignments": 1-3 rooms. Each room is a topic this exchange belongs to. {{"room_type": "<file|concept|workflow>", "room_key": "<identifier>", "room_label": "<short label>", "relevance": <0.0-1.0>}}. A room should be specific enough to group related exchanges (e.g. "retry_timeout" not "errors").
+
+Do NOT include "files_touched".
+
+Project: {project_id}
+
+Exchange (messages {ply_start}-{ply_end}):
+{messages_text}
+
+Respond with ONLY valid JSON."""
+
+
+
+

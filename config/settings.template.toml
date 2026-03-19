@@ -1,0 +1,52 @@
+[paths]
+# Where Searchat stores its own database, logs, and caches.
+search_directory = "~/.searchat"
+
+# Claude Code transcripts on Windows.
+claude_directory_windows = "~/.claude/projects"
+
+# Optional WSL Claude path. Leave empty if you do not use WSL.
+# Example:
+# claude_directory_wsl = "//wsl.localhost/Ubuntu/home/{username}/.claude/projects"
+claude_directory_wsl = ""
+
+[indexing]
+# Re-index active conversations after they change.
+reindex_on_modification = true
+
+# Wait this many minutes after the last write before re-indexing.
+modification_debounce_minutes = 5
+
+[search]
+# Default UI/API mode: "cross-layer", "verbatim", or "distill"
+default_mode = "cross-layer"
+
+# Default number of results to return.
+max_results = 100
+
+[embedding]
+# "auto" chooses GPU when available, otherwise CPU.
+device = "auto"
+
+# Smaller numbers use less RAM/VRAM but index more slowly.
+batch_size = 32
+
+[performance]
+# "keyword" keeps startup cheap on modest hardware.
+# Use "semantic" if you want distilled semantic search preloaded.
+# Use "none" to skip warmup entirely.
+startup_warmup_mode = "keyword"
+
+[distillation]
+# Which subscription-backed CLI family to use:
+#   "auto"   -> probe PATH for claude, then codex (recommended)
+#   "claude"  -> Claude Code CLI (falls back to codex if not found)
+#   "openai"  -> Codex CLI (falls back to claude if not found)
+provider = "auto"
+
+# Model is auto-selected per provider when it doesn't match:
+#   Claude default: "claude-haiku-4-5-20251001"
+#   OpenAI default: "gpt-5.3-codex"
+cli_model = "claude-haiku-4-5-20251001"
+
+

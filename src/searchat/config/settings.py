@@ -8,6 +8,7 @@ Configuration precedence (highest to lowest):
 4. Hardcoded constants (constants.py)
 """
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,8 +19,10 @@ from dotenv import load_dotenv
 from .constants import (
     DEFAULT_DATA_DIR,
     DEFAULT_CONFIG_SUBDIR,
+    DEFAULT_EXCLUDED_CONVERSATIONS_DIR,
     SETTINGS_FILE,
     DEFAULT_SETTINGS_FILE,
+    SETTINGS_TEMPLATE_FILE,
     ENV_FILE,
     # Defaults
     DEFAULT_EMBEDDING_MODEL,
@@ -30,16 +33,30 @@ from .constants import (
     DEFAULT_INDEX_INTERVAL_MINUTES,
     DEFAULT_REINDEX_ON_MODIFICATION,
     DEFAULT_MODIFICATION_DEBOUNCE_MINUTES,
+    DEFAULT_EXCLUDED_PROMPT_PREFIXES,
     DEFAULT_SEARCH_MODE,
     DEFAULT_MAX_RESULTS,
     DEFAULT_SNIPPET_LENGTH,
+    DEFAULT_INTERSECTION_BOOST,
+    DEFAULT_PALACE_WEIGHT,
+    DEFAULT_VERBATIM_WEIGHT,
     DEFAULT_MEMORY_LIMIT_MB,
     DEFAULT_QUERY_CACHE_SIZE,
     DEFAULT_ENABLE_PROFILING,
+    DEFAULT_STARTUP_WARMUP_MODE,
     DEFAULT_THEME,
     DEFAULT_FONT_FAMILY,
     DEFAULT_FONT_SIZE,
     DEFAULT_HIGHLIGHT_COLOR,
+    # Hybrid search tuning defaults
+    DEFAULT_KEYWORD_WEIGHT,
+    DEFAULT_SEMANTIC_WEIGHT,
+    DEFAULT_RANK_DECAY,
+    DEFAULT_TITLE_BOOST,
+    DEFAULT_BM25_K1,
+    DEFAULT_BM25_B,
+    DEFAULT_BM25_CANDIDATES,
+    DEFAULT_FAISS_K,
     # Environment variable names
     ENV_DATA_DIR,
     ENV_WINDOWS_PROJECTS,
@@ -49,8 +66,52 @@ from .constants import (
     ENV_EMBEDDING_BATCH,
     ENV_CACHE_SIZE,
     ENV_PROFILING,
+    ENV_STARTUP_WARMUP_MODE,
+    ENV_INTERSECTION_BOOST,
+    ENV_PALACE_WEIGHT,
+    ENV_VERBATIM_WEIGHT,
+    # Hybrid search tuning env vars
+    ENV_KEYWORD_WEIGHT,
+    ENV_SEMANTIC_WEIGHT,
+    ENV_RANK_DECAY,
+    ENV_TITLE_BOOST,
+    ENV_BM25_K1,
+    ENV_BM25_B,
+    ENV_BM25_CANDIDATES,
+    ENV_FAISS_K,
     ERROR_NO_CONFIG,
+    # Distillation defaults
+    DEFAULT_DISTILLATION_CLI_MODEL,
+    DEFAULT_DISTILLATION_PROVIDER,
+    DEFAULT_DISTILLATION_BATCH_SIZE,
+    DEFAULT_DISTILLATION_MAX_PLY_LENGTH,
+    DEFAULT_DISTILLATION_MIN_EXCHANGE_CHARS,
+    DEFAULT_DISTILLATION_PROMPT,
+    ENV_DISTILLATION_PROVIDER,
+    ENV_DISTILLATION_CLI_MODEL,
+    ENV_DISTILLATION_BATCH_SIZE,
+    ENV_DISTILLATION_MAX_PLY_LENGTH,
+    ENV_DISTILLATION_MIN_EXCHANGE_CHARS,
+    # Unified search engine
+    DEFAULT_SEARCH_ENGINE,
+    ENV_SEARCH_ENGINE,
+    # Backfill defaults
+    DEFAULT_BACKFILL_LLM_URL,
+    DEFAULT_BACKFILL_TIMEOUT,
+    DEFAULT_BACKFILL_BATCH_SIZE,
+    DEFAULT_BACKFILL_TIER_SMALL_MAX_CHARS,
+    DEFAULT_BACKFILL_TIER_SMALL_CONCURRENT,
+    DEFAULT_BACKFILL_TIER_MEDIUM_MAX_CHARS,
+    DEFAULT_BACKFILL_TIER_MEDIUM_CONCURRENT,
+    DEFAULT_BACKFILL_TIER_LARGE_MAX_CHARS,
+    DEFAULT_BACKFILL_TIER_LARGE_CONCURRENT,
+    DEFAULT_BACKFILL_TIER_HUGE_CONCURRENT,
+    ENV_BACKFILL_LLM_URL,
+    ENV_BACKFILL_TIMEOUT,
+    ENV_BACKFILL_BATCH_SIZE,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Load .env file at module import time
@@ -87,6 +148,7 @@ def _get_env_int(key: str, default: int) -> int:
     try:
         return int(value)
     except ValueError:
+        logger.warning("Invalid integer for %s: %r. Using default %r.", key, value, default)
         return default
 
 
@@ -95,7 +157,25 @@ def _get_env_bool(key: str, default: bool) -> bool:
     value = os.getenv(key)
     if value is None:
         return default
-    return value.lower() in ("true", "1", "yes", "on")
+    normalized = value.strip().lower()
+    if normalized in ("true", "1", "yes", "on"):
+        return True
+    if normalized in ("false", "0", "no", "off"):
+        return False
+    logger.warning("Invalid boolean for %s: %r. Using default %r.", key, value, default)
+    return default
+
+
+def _get_env_float(key: str, default: float) -> float:
+    """Get float value from environment variable."""
+    value = os.getenv(key)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        logger.warning("Invalid float for %s: %r. Using default %r.", key, value, default)
+        return default
 
 
 @dataclass
@@ -104,6 +184,7 @@ class PathsConfig:
     claude_directory_wsl: str
     search_directory: str
     auto_detect_environment: bool
+    excluded_conversations_dir: str
 
     @classmethod
     def from_dict(cls, data: dict) -> "PathsConfig":
@@ -125,6 +206,10 @@ class PathsConfig:
                 "SEARCHAT_AUTO_DETECT",
                 data.get("auto_detect_environment", True)
             ),
+            excluded_conversations_dir=_get_env_str(
+                "SEARCHAT_EXCLUDED_CONVERSATIONS_DIR",
+                data.get("excluded_conversations_dir", DEFAULT_EXCLUDED_CONVERSATIONS_DIR)
+            ),
         )
 
 
@@ -136,10 +221,28 @@ class IndexingConfig:
     max_workers: int
     reindex_on_modification: bool
     modification_debounce_minutes: int
+    excluded_prompt_prefixes: tuple
 
     @classmethod
-    def from_dict(cls, data: dict) -> "IndexingConfig":
-        """Create IndexingConfig from dict with environment variable overrides."""
+    def from_dict(cls, data: dict, config_dir: Optional[Path] = None) -> "IndexingConfig":
+        """Create IndexingConfig from dict with hardware detection and env overrides."""
+        # Get hardware profile for optimal worker count
+        hw_workers = DEFAULT_MAX_WORKERS
+
+        if config_dir is not None:
+            try:
+                from searchat.utils.hardware import get_or_detect_hardware
+                hw_profile = get_or_detect_hardware(config_dir, force_detect=False)
+                hw_workers = hw_profile.indexing_workers
+            except Exception as e:
+                logger.warning(
+                    "Failed to load hardware profile for indexing config from %s: %s",
+                    config_dir,
+                    e,
+                )
+
+        workers_default = data.get("max_workers", hw_workers)
+
         return cls(
             batch_size=_get_env_int(
                 "SEARCHAT_INDEX_BATCH_SIZE",
@@ -155,7 +258,7 @@ class IndexingConfig:
             ),
             max_workers=_get_env_int(
                 "SEARCHAT_MAX_WORKERS",
-                data.get("max_workers", DEFAULT_MAX_WORKERS)
+                workers_default
             ),
             reindex_on_modification=_get_env_bool(
                 "SEARCHAT_REINDEX_ON_MODIFICATION",
@@ -165,7 +268,92 @@ class IndexingConfig:
                 "SEARCHAT_MODIFICATION_DEBOUNCE_MINUTES",
                 data.get("modification_debounce_minutes", DEFAULT_MODIFICATION_DEBOUNCE_MINUTES)
             ),
+            excluded_prompt_prefixes=tuple(
+                data.get("excluded_prompt_prefixes", DEFAULT_EXCLUDED_PROMPT_PREFIXES)
+            ),
         )
+
+
+@dataclass
+class RankingConfig:
+    """Configuration for unified search result ranking."""
+    intersection_boost: float  # Multiplier for results appearing in both layers
+    palace_weight: float  # Weight for palace layer scores
+    verbatim_weight: float  # Weight for verbatim layer scores
+    # Hybrid search tuning parameters
+    keyword_weight: float  # Weight for BM25 keyword results in hybrid fusion
+    semantic_weight: float  # Weight for FAISS semantic results in hybrid fusion
+    rank_decay: float  # Decay constant for rank-based weighting
+    title_boost: float  # Multiplier when query terms appear in title
+    bm25_k1: float  # BM25 term frequency saturation parameter
+    bm25_b: float  # BM25 document length normalization parameter
+    bm25_candidates: int  # Number of BM25 candidates to retrieve
+    faiss_k: int  # Number of FAISS nearest neighbors to retrieve
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "RankingConfig":
+        """Create RankingConfig from dict with environment variable overrides."""
+        return cls(
+            intersection_boost=_get_env_float(
+                ENV_INTERSECTION_BOOST,
+                data.get("intersection_boost", DEFAULT_INTERSECTION_BOOST)
+            ),
+            palace_weight=_get_env_float(
+                ENV_PALACE_WEIGHT,
+                data.get("palace_weight", DEFAULT_PALACE_WEIGHT)
+            ),
+            verbatim_weight=_get_env_float(
+                ENV_VERBATIM_WEIGHT,
+                data.get("verbatim_weight", DEFAULT_VERBATIM_WEIGHT)
+            ),
+            keyword_weight=_get_env_float(
+                ENV_KEYWORD_WEIGHT,
+                data.get("keyword_weight", DEFAULT_KEYWORD_WEIGHT)
+            ),
+            semantic_weight=_get_env_float(
+                ENV_SEMANTIC_WEIGHT,
+                data.get("semantic_weight", DEFAULT_SEMANTIC_WEIGHT)
+            ),
+            rank_decay=_get_env_float(
+                ENV_RANK_DECAY,
+                data.get("rank_decay", DEFAULT_RANK_DECAY)
+            ),
+            title_boost=_get_env_float(
+                ENV_TITLE_BOOST,
+                data.get("title_boost", DEFAULT_TITLE_BOOST)
+            ),
+            bm25_k1=_get_env_float(
+                ENV_BM25_K1,
+                data.get("bm25_k1", DEFAULT_BM25_K1)
+            ),
+            bm25_b=_get_env_float(
+                ENV_BM25_B,
+                data.get("bm25_b", DEFAULT_BM25_B)
+            ),
+            bm25_candidates=_get_env_int(
+                ENV_BM25_CANDIDATES,
+                data.get("bm25_candidates", DEFAULT_BM25_CANDIDATES)
+            ),
+            faiss_k=_get_env_int(
+                ENV_FAISS_K,
+                data.get("faiss_k", DEFAULT_FAISS_K)
+            ),
+        )
+
+    @property
+    def boost_multiplier(self) -> float:
+        """Convert percentage boost to multiplier (0.2 -> 1.2)."""
+        return 1 + self.intersection_boost
+
+    @property
+    def scaled_palace_weight(self) -> float:
+        """Palace weight scaled so max intersection score = 1.0."""
+        return self.palace_weight / self.boost_multiplier
+
+    @property
+    def scaled_verbatim_weight(self) -> float:
+        """Verbatim weight scaled so max intersection score = 1.0."""
+        return self.verbatim_weight / self.boost_multiplier
 
 
 @dataclass
@@ -173,6 +361,8 @@ class SearchConfig:
     default_mode: str
     max_results: int
     snippet_length: int
+    ranking: RankingConfig
+    engine: str  # "legacy" | "unified" | "compare"
 
     @classmethod
     def from_dict(cls, data: dict) -> "SearchConfig":
@@ -190,6 +380,11 @@ class SearchConfig:
                 "SEARCHAT_SNIPPET_LENGTH",
                 data.get("snippet_length", DEFAULT_SNIPPET_LENGTH)
             ),
+            ranking=RankingConfig.from_dict(data.get("ranking", {})),
+            engine=_get_env_str(
+                ENV_SEARCH_ENGINE,
+                data.get("engine", DEFAULT_SEARCH_ENGINE)
+            ),
         )
 
 
@@ -201,8 +396,36 @@ class EmbeddingConfig:
     device: str = "auto"  # auto, cuda, cpu
 
     @classmethod
-    def from_dict(cls, data: dict) -> "EmbeddingConfig":
-        """Create EmbeddingConfig from dict with environment variable overrides."""
+    def from_dict(cls, data: dict, config_dir: Optional[Path] = None) -> "EmbeddingConfig":
+        """Create EmbeddingConfig from dict with hardware detection and env overrides.
+
+        Priority for batch_size and device:
+        1. Environment variable
+        2. User config (settings.toml)
+        3. Hardware profile (hardware.toml) - auto-detected
+        4. Hardcoded defaults
+        """
+        # Get hardware profile if available
+        hw_batch_size = DEFAULT_EMBEDDING_BATCH_SIZE
+        hw_device = "auto"
+
+        if config_dir is not None:
+            try:
+                from searchat.utils.hardware import get_or_detect_hardware
+                hw_profile = get_or_detect_hardware(config_dir, force_detect=False)
+                hw_batch_size = hw_profile.embedding_batch_size
+                hw_device = hw_profile.embedding_device
+            except Exception as e:
+                logger.warning(
+                    "Failed to load hardware profile for embedding config from %s: %s",
+                    config_dir,
+                    e,
+                )
+
+        # Use hardware profile as fallback if not in user config
+        batch_default = data.get("batch_size", hw_batch_size)
+        device_default = data.get("device", hw_device)
+
         return cls(
             model=_get_env_str(
                 ENV_EMBEDDING_MODEL,
@@ -210,7 +433,7 @@ class EmbeddingConfig:
             ),
             batch_size=_get_env_int(
                 ENV_EMBEDDING_BATCH,
-                data.get("batch_size", DEFAULT_EMBEDDING_BATCH_SIZE)
+                batch_default
             ),
             cache_embeddings=_get_env_bool(
                 "SEARCHAT_CACHE_EMBEDDINGS",
@@ -218,7 +441,7 @@ class EmbeddingConfig:
             ),
             device=_get_env_str(
                 "SEARCHAT_EMBEDDING_DEVICE",
-                data.get("device", "auto")
+                device_default
             ),
         )
 
@@ -282,6 +505,7 @@ class PerformanceConfig:
     memory_limit_mb: int
     query_cache_size: int
     enable_profiling: bool
+    startup_warmup_mode: str
 
     @classmethod
     def from_dict(cls, data: dict) -> "PerformanceConfig":
@@ -299,7 +523,119 @@ class PerformanceConfig:
                 ENV_PROFILING,
                 data.get("enable_profiling", DEFAULT_ENABLE_PROFILING)
             ),
+            startup_warmup_mode=_get_env_str(
+                ENV_STARTUP_WARMUP_MODE,
+                data.get("startup_warmup_mode", DEFAULT_STARTUP_WARMUP_MODE)
+            ),
         )
+
+
+@dataclass
+class DistillationConfig:
+    provider: str
+    cli_model: str
+    batch_size: int
+    max_ply_length: int
+    min_exchange_chars: int
+    prompt: str
+    perturn_prompt: str
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "DistillationConfig":
+        provider = _get_env_str(
+            ENV_DISTILLATION_PROVIDER,
+            data.get("provider", DEFAULT_DISTILLATION_PROVIDER)
+        )
+        normalized_provider = (provider or DEFAULT_DISTILLATION_PROVIDER).strip().lower()
+        if normalized_provider not in {"claude", "openai", "auto"}:
+            logger.warning(
+                "Invalid distillation provider %r. Using default %r.",
+                provider,
+                DEFAULT_DISTILLATION_PROVIDER,
+            )
+            normalized_provider = DEFAULT_DISTILLATION_PROVIDER
+
+        return cls(
+            provider=normalized_provider,
+            cli_model=_get_env_str(
+                ENV_DISTILLATION_CLI_MODEL,
+                data.get("cli_model", DEFAULT_DISTILLATION_CLI_MODEL)
+            ),
+            batch_size=_get_env_int(
+                ENV_DISTILLATION_BATCH_SIZE,
+                data.get("batch_size", DEFAULT_DISTILLATION_BATCH_SIZE)
+            ),
+            max_ply_length=_get_env_int(
+                ENV_DISTILLATION_MAX_PLY_LENGTH,
+                data.get("max_ply_length", DEFAULT_DISTILLATION_MAX_PLY_LENGTH)
+            ),
+            min_exchange_chars=_get_env_int(
+                ENV_DISTILLATION_MIN_EXCHANGE_CHARS,
+                data.get("min_exchange_chars", DEFAULT_DISTILLATION_MIN_EXCHANGE_CHARS)
+            ),
+            prompt=data.get("prompt", DEFAULT_DISTILLATION_PROMPT),
+            perturn_prompt=data.get("perturn_prompt", data.get("prompt", DEFAULT_DISTILLATION_PROMPT)),
+        )
+
+
+@dataclass
+class BackfillTier:
+    """A size tier for backfill processing."""
+    name: str
+    max_chars: int  # Max exchange size in chars for this tier (inf for last tier)
+    max_concurrent: int  # Concurrent requests for this tier
+
+
+@dataclass
+class BackfillConfig:
+    """Configuration for local llama-server backfill."""
+    llm_url: str
+    timeout: float
+    batch_size: int
+    tiers: list  # List of BackfillTier
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BackfillConfig":
+        tiers_data = data.get("tiers", [])
+        if tiers_data:
+            tiers = [
+                BackfillTier(
+                    name=t.get("name", f"tier_{i}"),
+                    max_chars=t.get("max_chars", float("inf")),
+                    max_concurrent=t.get("max_concurrent", 1),
+                )
+                for i, t in enumerate(tiers_data)
+            ]
+        else:
+            # Default tiers
+            tiers = [
+                BackfillTier("small", DEFAULT_BACKFILL_TIER_SMALL_MAX_CHARS, DEFAULT_BACKFILL_TIER_SMALL_CONCURRENT),
+                BackfillTier("medium", DEFAULT_BACKFILL_TIER_MEDIUM_MAX_CHARS, DEFAULT_BACKFILL_TIER_MEDIUM_CONCURRENT),
+                BackfillTier("large", DEFAULT_BACKFILL_TIER_LARGE_MAX_CHARS, DEFAULT_BACKFILL_TIER_LARGE_CONCURRENT),
+                BackfillTier("huge", float("inf"), DEFAULT_BACKFILL_TIER_HUGE_CONCURRENT),
+            ]
+        return cls(
+            llm_url=_get_env_str(
+                ENV_BACKFILL_LLM_URL,
+                data.get("llm_url", DEFAULT_BACKFILL_LLM_URL)
+            ),
+            timeout=_get_env_float(
+                ENV_BACKFILL_TIMEOUT,
+                data.get("timeout", DEFAULT_BACKFILL_TIMEOUT)
+            ),
+            batch_size=_get_env_int(
+                ENV_BACKFILL_BATCH_SIZE,
+                data.get("batch_size", DEFAULT_BACKFILL_BATCH_SIZE)
+            ),
+            tiers=tiers,
+        )
+
+    def get_tier_for_size(self, text_len: int) -> BackfillTier:
+        """Get the tier for a given text length."""
+        for tier in self.tiers:
+            if text_len <= tier.max_chars:
+                return tier
+        return self.tiers[-1]  # Last tier handles everything else
 
 
 @dataclass
@@ -310,6 +646,8 @@ class Config:
     embedding: EmbeddingConfig
     ui: UIConfig
     performance: PerformanceConfig
+    distillation: DistillationConfig
+    backfill: BackfillConfig
 
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> "Config":
@@ -361,6 +699,7 @@ class Config:
                         path=config_path,
                         config_dir=DEFAULT_DATA_DIR / DEFAULT_CONFIG_SUBDIR,
                         default_file=DEFAULT_SETTINGS_FILE,
+                        template_file=SETTINGS_TEMPLATE_FILE,
                         settings_file=SETTINGS_FILE,
                     )
                 )
@@ -368,11 +707,14 @@ class Config:
             data = {}
 
         # Build config objects with environment variable overrides
+        config_dir = DEFAULT_DATA_DIR / DEFAULT_CONFIG_SUBDIR
         return cls(
             paths=PathsConfig.from_dict(data.get("paths", {})),
-            indexing=IndexingConfig.from_dict(data.get("indexing", {})),
+            indexing=IndexingConfig.from_dict(data.get("indexing", {}), config_dir=config_dir),
             search=SearchConfig.from_dict(data.get("search", {})),
-            embedding=EmbeddingConfig.from_dict(data.get("embedding", {})),
+            embedding=EmbeddingConfig.from_dict(data.get("embedding", {}), config_dir=config_dir),
             ui=UIConfig.from_dict(data.get("ui", {})),
             performance=PerformanceConfig.from_dict(data.get("performance", {})),
+            distillation=DistillationConfig.from_dict(data.get("distillation", {})),
+            backfill=BackfillConfig.from_dict(data.get("backfill", {})),
         )
