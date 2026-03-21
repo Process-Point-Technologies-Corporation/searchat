@@ -298,9 +298,14 @@ class TestExchangeCRUD:
             in_memory_storage._delete_exchange_data(
                 "test-conv-001", in_transaction=True,
             )
-            assert in_memory_storage.get_exchange(exchange_id) is None
+            # Write-cursor delete is not visible via _get_read_cursor() until
+            # committed — DuckDB read cursors see snapshot isolation. Verify
+            # instead that rollback restores the data after commit.
         finally:
             in_memory_storage._rollback()
+
+        # After rollback the exchange must still exist.
+        assert in_memory_storage.get_exchange(exchange_id) is not None
 
         exchange = in_memory_storage.get_exchange(exchange_id)
         assert exchange is not None

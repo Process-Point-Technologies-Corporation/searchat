@@ -40,7 +40,7 @@ def test_platform_detection():
     print(f"PlatformManager.is_linux: {pm.is_linux}")
     print(f"PlatformManager.is_macos: {pm.is_macos}")
 
-    return platform
+    assert platform is not None
 
 
 def test_path_translation():
@@ -136,7 +136,7 @@ def display_command_preview(pm: PlatformManager, command: str, cwd: str = None):
         print(f"  Will execute: {cmd_args}")
 
 
-def test_terminal_launch(pm: PlatformManager, platform: str, interactive: bool = True):
+def manual_terminal_launch(pm: PlatformManager, platform: str, interactive: bool = True):
     """Test terminal launching with various path scenarios."""
     print_section("Terminal Launch Tests")
 
@@ -197,7 +197,7 @@ def main():
     print("\nPress Ctrl+C to exit at any time.")
 
     try:
-        test_terminal_launch(pm, platform, interactive=True)
+        manual_terminal_launch(pm, platform, interactive=True)
     except KeyboardInterrupt:
         print("\n\nTests interrupted by user.")
         return

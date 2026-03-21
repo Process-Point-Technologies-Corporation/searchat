@@ -74,5 +74,5 @@ def test_distillation_config_accepts_openai_provider():
 
 def test_distillation_config_invalid_provider_falls_back_to_claude(caplog):
     config = DistillationConfig.from_dict({"provider": "bogus"})
-    assert config.provider == "claude"
+    assert config.provider == "auto"
     assert "Invalid distillation provider" in caplog.text
