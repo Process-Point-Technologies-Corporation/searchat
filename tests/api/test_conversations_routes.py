@@ -1,14 +1,15 @@
-"""Unit tests for conversations API routes."""
+"""Unit tests for conversations API routes (unified-only codebase)."""
 import pytest
 import json
-from datetime import datetime
-from unittest.mock import Mock, patch, mock_open
-from pathlib import Path
+from datetime import datetime, timedelta
+from unittest.mock import Mock, patch, MagicMock
 
 from fastapi.testclient import TestClient
-from fastapi import HTTPException
 
 from searchat.api.app import app
+
+
+PATCH_GET_ENGINE = 'searchat.api.routers.conversations.get_unified_search_engine'
 
 
 @pytest.fixture
@@ -17,16 +18,59 @@ def client():
     return TestClient(app)
 
 
+def _make_engine(get_conversation_return=None, cursor_rows=None):
+    """Build a mock UnifiedSearchEngine with storage mock.
+
+    cursor_rows: list of tuples matching the SELECT column order:
+        (conversation_id, project_id, title, created_at, updated_at,
+         message_count, file_path)
+    The mock handles two sequential execute calls:
+        1. COUNT(*) → returns (len(cursor_rows),)
+        2. Data query → returns cursor_rows
+    """
+    engine = Mock()
+    cursor = MagicMock()
+    rows = cursor_rows or []
+    # Each execute() returns a new result mock; side_effect sequences them
+    count_result = MagicMock()
+    count_result.fetchone.return_value = (len(rows),)
+    data_result = MagicMock()
+    data_result.fetchall.return_value = rows
+    cursor.execute.side_effect = [count_result, data_result]
+    engine.storage._get_read_cursor.return_value = cursor
+    engine.storage._get_cursor.return_value = Mock()
+    engine.storage.get_conversation.return_value = get_conversation_return
+    return engine
+
+
+def _conv_rows(rows):
+    """Convert list of dicts to list of tuples matching SELECT column order.
+
+    Column order: conversation_id, project_id, title, created_at, updated_at,
+                  message_count, file_path
+    """
+    return [
+        (
+            r['conversation_id'], r['project_id'], r['title'],
+            r['created_at'], r['updated_at'], r['message_count'],
+            r['file_path'],
+        )
+        for r in rows
+        if r['message_count'] > 0  # SQL WHERE filters these
+    ]
+
+
+SAMPLE_ROWS_RAW = None  # set in fixture
+
 @pytest.fixture
-def mock_search_engine():
-    """Mock SearchEngine with sample conversations."""
-    import pandas as pd
+def sample_rows():
+    """Default three-row dataset used by multiple test classes.
 
-    mock = Mock()
-
-    # Create sample conversations dataframe with conversation_id as index
+    conv-3 has message_count=0 and is filtered by the SQL WHERE clause,
+    so _conv_rows() excludes it.
+    """
     now = datetime.now()
-    df = pd.DataFrame([
+    raw = [
         {
             'conversation_id': 'conv-1',
             'project_id': 'project-a',
@@ -35,7 +79,7 @@ def mock_search_engine():
             'updated_at': now,
             'message_count': 10,
             'file_path': '/home/user/.claude/conv-1.jsonl',
-            'full_text': 'This is a conversation about implementing binary search in Python...'
+            'full_text': 'This is a conversation about implementing binary search in Python...',
         },
         {
             'conversation_id': 'conv-2',
@@ -45,7 +89,7 @@ def mock_search_engine():
             'updated_at': now,
             'message_count': 5,
             'file_path': 'C:\\Users\\Test\\.claude\\conv-2.jsonl',
-            'full_text': 'Discussion about REST API design patterns'
+            'full_text': 'Discussion about REST API design patterns',
         },
         {
             'conversation_id': 'conv-3',
@@ -53,16 +97,12 @@ def mock_search_engine():
             'title': 'Empty Conversation',
             'created_at': now,
             'updated_at': now,
-            'message_count': 0,  # This should be filtered out
+            'message_count': 0,
             'file_path': '/home/user/.claude/conv-3.jsonl',
-            'full_text': ''
-        }
-    ])
-
-    # Set conversation_id as index (matching production behavior)
-    mock.conversations_df = df.set_index('conversation_id', drop=False)
-
-    return mock
+            'full_text': '',
+        },
+    ]
+    return _conv_rows(raw)
 
 
 @pytest.fixture
@@ -70,73 +110,88 @@ def mock_platform_manager():
     """Mock PlatformManager for terminal operations."""
     mock = Mock()
     mock.platform = "windows"
-    mock.normalize_path = Mock(side_effect=lambda x: x)  # Return path unchanged
+    mock.normalize_path = Mock(side_effect=lambda x: x)
     mock.open_terminal_with_command = Mock()
     return mock
 
 
+def _conv_dict(conversation_id='conv-1', project_id='project-a',
+               title='Python Binary Search',
+               file_path='/home/user/.claude/conv-1.jsonl',
+               message_count=10, **overrides):
+    """Build a conversation dict matching UnifiedStorage.get_conversation() output."""
+    now = datetime.now()
+    base = {
+        'conversation_id': conversation_id,
+        'project_id': project_id,
+        'title': title,
+        'file_path': file_path,
+        'created_at': now,
+        'updated_at': now,
+        'message_count': message_count,
+        'full_text': '',
+        'file_hash': 'abc123',
+        'indexed_at': now,
+    }
+    base.update(overrides)
+    return base
+
+
+# ---------------------------------------------------------------------------
+# GET /api/conversations/all
+# ---------------------------------------------------------------------------
 @pytest.mark.unit
 class TestGetAllConversationsEndpoint:
     """Tests for GET /api/conversations/all endpoint."""
 
-    def test_get_all_conversations_default_sort(self, client, mock_search_engine):
+    def _get(self, client, rows, params=""):
+        """rows: list of tuples (conv_id, project_id, title, created_at, updated_at, msg_count, file_path, snippet)"""
+        engine = _make_engine(cursor_rows=rows)
+        with patch(PATCH_GET_ENGINE, return_value=engine):
+            return client.get(f"/api/conversations/all{params}")
+
+    def test_get_all_conversations_default_sort(self, client, sample_rows):
         """Test getting all conversations with default sort (by length)."""
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
-            response = client.get("/api/conversations/all")
+        response = self._get(client, sample_rows)
 
-            assert response.status_code == 200
-            data = response.json()
+        assert response.status_code == 200
+        data = response.json()
 
-            assert "results" in data
-            assert "total" in data
-            assert data["total"] == 2  # conv-3 filtered out (0 messages)
+        assert "results" in data
+        assert "total" in data
+        assert data["total"] == 2  # conv-3 filtered out (0 messages)
 
-            # Should be sorted by message_count descending (conv-1: 10, conv-2: 5)
-            assert data["results"][0]["conversation_id"] == "conv-1"
-            assert data["results"][0]["message_count"] == 10
-            assert data["results"][1]["conversation_id"] == "conv-2"
-            assert data["results"][1]["message_count"] == 5
+        # Sorted by message_count descending (conv-1: 10, conv-2: 5)
+        assert data["results"][0]["conversation_id"] == "conv-1"
+        assert data["results"][0]["message_count"] == 10
+        assert data["results"][1]["conversation_id"] == "conv-2"
+        assert data["results"][1]["message_count"] == 5
 
-    def test_get_all_conversations_filters_zero_messages(self, client, mock_search_engine):
+    def test_get_all_conversations_filters_zero_messages(self, client, sample_rows):
         """Test that conversations with 0 messages are filtered out."""
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
-            response = client.get("/api/conversations/all")
+        response = self._get(client, sample_rows)
 
-            assert response.status_code == 200
-            data = response.json()
+        assert response.status_code == 200
+        data = response.json()
 
-            # conv-3 has 0 messages and should be filtered
-            conv_ids = [r["conversation_id"] for r in data["results"]]
-            assert "conv-3" not in conv_ids
-            assert len(data["results"]) == 2
+        conv_ids = [r["conversation_id"] for r in data["results"]]
+        assert "conv-3" not in conv_ids
+        assert len(data["results"]) == 2
 
-    def test_get_all_conversations_sort_by_length(self, client, mock_search_engine):
+    def test_get_all_conversations_sort_by_length(self, client, sample_rows):
         """Test sorting by message count (length)."""
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
-            response = client.get("/api/conversations/all?sort_by=length")
+        response = self._get(client, sample_rows, "?sort_by=length")
 
-            assert response.status_code == 200
-            data = response.json()
+        assert response.status_code == 200
+        data = response.json()
 
-            # Descending order by message count
-            assert data["results"][0]["message_count"] >= data["results"][1]["message_count"]
+        assert data["results"][0]["message_count"] >= data["results"][1]["message_count"]
 
-    def test_get_all_conversations_sort_by_date_newest(self, client, mock_search_engine):
-        """Test sorting by newest date."""
-        # Modify dataframe with different dates
-        import pandas as pd
+    def test_get_all_conversations_sort_by_date_newest(self, client):
+        """Test sorting by newest date (SQL ORDER BY returns newest first)."""
         now = datetime.now()
-        mock_search_engine.conversations_df = pd.DataFrame([
-            {
-                'conversation_id': 'conv-old',
-                'project_id': 'project-a',
-                'title': 'Old',
-                'created_at': now,
-                'updated_at': datetime(2025, 1, 1),
-                'message_count': 5,
-                'file_path': '/test/old.jsonl',
-                'full_text': 'Old conversation'
-            },
+        # SQL returns pre-sorted: newest first
+        rows = _conv_rows([
             {
                 'conversation_id': 'conv-new',
                 'project_id': 'project-a',
@@ -145,25 +200,32 @@ class TestGetAllConversationsEndpoint:
                 'updated_at': datetime(2025, 1, 31),
                 'message_count': 5,
                 'file_path': '/test/new.jsonl',
-                'full_text': 'New conversation'
-            }
+                'full_text': 'New conversation',
+            },
+            {
+                'conversation_id': 'conv-old',
+                'project_id': 'project-a',
+                'title': 'Old',
+                'created_at': now,
+                'updated_at': datetime(2025, 1, 1),
+                'message_count': 5,
+                'file_path': '/test/old.jsonl',
+                'full_text': 'Old conversation',
+            },
         ])
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
-            response = client.get("/api/conversations/all?sort_by=date_newest")
+        response = self._get(client, rows, "?sort_by=date_newest")
 
-            assert response.status_code == 200
-            data = response.json()
+        assert response.status_code == 200
+        data = response.json()
 
-            # Newest first
-            assert data["results"][0]["conversation_id"] == "conv-new"
-            assert data["results"][1]["conversation_id"] == "conv-old"
+        assert data["results"][0]["conversation_id"] == "conv-new"
+        assert data["results"][1]["conversation_id"] == "conv-old"
 
-    def test_get_all_conversations_sort_by_date_oldest(self, client, mock_search_engine):
+    def test_get_all_conversations_sort_by_date_oldest(self, client):
         """Test sorting by oldest date."""
-        import pandas as pd
         now = datetime.now()
-        mock_search_engine.conversations_df = pd.DataFrame([
+        rows = _conv_rows([
             {
                 'conversation_id': 'conv-old',
                 'project_id': 'project-a',
@@ -172,7 +234,7 @@ class TestGetAllConversationsEndpoint:
                 'updated_at': datetime(2025, 1, 1),
                 'message_count': 5,
                 'file_path': '/test/old.jsonl',
-                'full_text': 'Old conversation'
+                'full_text': 'Old conversation',
             },
             {
                 'conversation_id': 'conv-new',
@@ -182,121 +244,123 @@ class TestGetAllConversationsEndpoint:
                 'updated_at': datetime(2025, 1, 31),
                 'message_count': 5,
                 'file_path': '/test/new.jsonl',
-                'full_text': 'New conversation'
-            }
+                'full_text': 'New conversation',
+            },
         ])
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
-            response = client.get("/api/conversations/all?sort_by=date_oldest")
+        response = self._get(client, rows, "?sort_by=date_oldest")
 
-            assert response.status_code == 200
-            data = response.json()
+        assert response.status_code == 200
+        data = response.json()
 
-            # Oldest first
-            assert data["results"][0]["conversation_id"] == "conv-old"
-            assert data["results"][1]["conversation_id"] == "conv-new"
+        assert data["results"][0]["conversation_id"] == "conv-old"
+        assert data["results"][1]["conversation_id"] == "conv-new"
 
-    def test_get_all_conversations_sort_by_title(self, client, mock_search_engine):
-        """Test sorting by title alphabetically."""
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
-            response = client.get("/api/conversations/all?sort_by=title")
-
-            assert response.status_code == 200
-            data = response.json()
-
-            # Alphabetical order
-            titles = [r["title"] for r in data["results"]]
-            assert titles == sorted(titles)
-
-    def test_get_all_conversations_source_detection(self, client, mock_search_engine):
-        """Test that source (WSL/WIN) is detected correctly."""
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
-            response = client.get("/api/conversations/all")
-
-            assert response.status_code == 200
-            data = response.json()
-
-            # conv-1 has /home/ path (WSL)
-            conv1 = next(r for r in data["results"] if r["conversation_id"] == "conv-1")
-            assert conv1["source"] == "WSL"
-
-            # conv-2 has C:\ path (Windows)
-            conv2 = next(r for r in data["results"] if r["conversation_id"] == "conv-2")
-            assert conv2["source"] == "WIN"
-
-    def test_get_all_conversations_snippet_truncation(self, client, mock_search_engine):
-        """Test that long text is truncated to snippet."""
-        import pandas as pd
+    def test_get_all_conversations_sort_by_title(self, client):
+        """Test sorting by title alphabetically (SQL ORDER BY returns sorted)."""
         now = datetime.now()
-        long_text = "A" * 300  # 300 characters
+        # SQL returns pre-sorted by title ASC
+        rows = _conv_rows([
+            {
+                'conversation_id': 'conv-2', 'project_id': 'project-b',
+                'title': 'API Design', 'created_at': now, 'updated_at': now,
+                'message_count': 5, 'file_path': '/test/conv-2.jsonl',
+                'full_text': 'API Design discussion',
+            },
+            {
+                'conversation_id': 'conv-1', 'project_id': 'project-a',
+                'title': 'Python Binary Search', 'created_at': now, 'updated_at': now,
+                'message_count': 10, 'file_path': '/test/conv-1.jsonl',
+                'full_text': 'Binary search...',
+            },
+        ])
+        response = self._get(client, rows, "?sort_by=title")
 
-        mock_search_engine.conversations_df = pd.DataFrame([{
-            'conversation_id': 'conv-long',
+        assert response.status_code == 200
+        data = response.json()
+
+        titles = [r["title"] for r in data["results"]]
+        assert titles == sorted(titles)
+
+    def test_get_all_conversations_source_detection(self, client, sample_rows):
+        """Test that source (WSL/WIN) is detected correctly."""
+        response = self._get(client, sample_rows)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # conv-1 has /home/ path (WSL)
+        conv1 = next(r for r in data["results"] if r["conversation_id"] == "conv-1")
+        assert conv1["source"] == "WSL"
+
+        # conv-2 has C:\ path (Windows)
+        conv2 = next(r for r in data["results"] if r["conversation_id"] == "conv-2")
+        assert conv2["source"] == "WIN"
+
+    def test_get_all_conversations_has_pagination_fields(self, client):
+        """Test that response includes pagination metadata."""
+        now = datetime.now()
+        rows = _conv_rows([{
+            'conversation_id': 'conv-1',
             'project_id': 'test',
-            'title': 'Long',
+            'title': 'Test',
             'created_at': now,
             'updated_at': now,
             'message_count': 5,
-            'file_path': '/test/long.jsonl',
-            'full_text': long_text
+            'file_path': '/test/conv.jsonl',
         }])
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
-            response = client.get("/api/conversations/all")
+        response = self._get(client, rows)
 
-            assert response.status_code == 200
-            data = response.json()
+        assert response.status_code == 200
+        data = response.json()
 
-            snippet = data["results"][0]["snippet"]
-            assert len(snippet) == 203  # 200 chars + "..."
-            assert snippet.endswith("...")
+        assert "total" in data
+        assert "limit" in data
+        assert "offset" in data
+        assert "has_more" in data
+        assert data["has_more"] is False  # only 1 result, less than limit
 
     def test_get_all_conversations_error_handling(self, client):
-        """Test error handling when search engine fails."""
-        mock_engine = Mock()
-        # Make copy() fail with an exception
-        mock_engine.conversations_df.copy.side_effect = Exception("Database error")
-
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_engine):
+        """Test error handling when DuckDB query raises."""
+        engine = _make_engine()
+        engine.storage._get_read_cursor.return_value.execute.side_effect = Exception("Database error")
+        with patch(PATCH_GET_ENGINE, return_value=engine):
             response = client.get("/api/conversations/all")
 
             assert response.status_code == 500
             assert "Database error" in response.json()["detail"]
 
-    def test_get_all_conversations_filter_by_project(self, client, mock_search_engine):
+    def test_get_all_conversations_filter_by_project(self, client):
         """Test filtering conversations by project."""
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
-            response = client.get("/api/conversations/all?project=project-a")
+        now = datetime.now()
+        # SQL WHERE filters to project-a only
+        rows = [('conv-1', 'project-a', 'Python Binary Search', now, now, 10,
+                 '/home/user/.claude/conv-1.jsonl', 'Binary search...')]
+        response = self._get(client, rows, "?project=project-a")
 
-            assert response.status_code == 200
-            data = response.json()
+        assert response.status_code == 200
+        data = response.json()
 
-            # Only project-a conversations (conv-3 has 0 messages so filtered out)
-            assert data["total"] == 1
-            assert data["results"][0]["conversation_id"] == "conv-1"
-            assert data["results"][0]["project_id"] == "project-a"
+        assert data["total"] == 1
+        assert data["results"][0]["conversation_id"] == "conv-1"
+        assert data["results"][0]["project_id"] == "project-a"
 
-    def test_get_all_conversations_filter_by_project_no_results(self, client, mock_search_engine):
+    def test_get_all_conversations_filter_by_project_no_results(self, client):
         """Test filtering by project with no matching conversations."""
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
-            response = client.get("/api/conversations/all?project=nonexistent-project")
+        response = self._get(client, [], "?project=nonexistent-project")
 
-            assert response.status_code == 200
-            data = response.json()
+        assert response.status_code == 200
+        data = response.json()
 
-            assert data["total"] == 0
-            assert len(data["results"]) == 0
+        assert data["total"] == 0
+        assert len(data["results"]) == 0
 
     def test_get_all_conversations_filter_by_date_today(self, client):
-        """Test filtering conversations from today."""
-        import pandas as pd
-        from datetime import datetime, timedelta
-
-        mock_engine = Mock()
+        """Test filtering conversations from today (SQL handles filtering)."""
         now = datetime.now()
-        yesterday = now - timedelta(days=1)
-
-        df = pd.DataFrame([
+        # SQL WHERE filters to today only — mock returns pre-filtered result
+        rows = _conv_rows([
             {
                 'conversation_id': 'conv-today',
                 'project_id': 'project-a',
@@ -305,43 +369,24 @@ class TestGetAllConversationsEndpoint:
                 'updated_at': now,
                 'message_count': 5,
                 'file_path': '/test/today.jsonl',
-                'full_text': 'Today conversation'
+                'full_text': 'Today conversation',
             },
-            {
-                'conversation_id': 'conv-yesterday',
-                'project_id': 'project-a',
-                'title': 'Yesterday',
-                'created_at': yesterday,
-                'updated_at': yesterday,
-                'message_count': 5,
-                'file_path': '/test/yesterday.jsonl',
-                'full_text': 'Yesterday conversation'
-            }
-        ]).set_index('conversation_id', drop=False)
+        ])
 
-        mock_engine.conversations_df = df
+        response = self._get(client, rows, "?date=today")
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_engine):
-            response = client.get("/api/conversations/all?date=today")
+        assert response.status_code == 200
+        data = response.json()
 
-            assert response.status_code == 200
-            data = response.json()
-
-            # Should only have today's conversation
-            assert data["total"] == 1
-            assert data["results"][0]["conversation_id"] == "conv-today"
+        assert data["total"] == 1
+        assert data["results"][0]["conversation_id"] == "conv-today"
 
     def test_get_all_conversations_filter_by_date_week(self, client):
-        """Test filtering conversations from last 7 days."""
-        import pandas as pd
-        from datetime import datetime, timedelta
-
-        mock_engine = Mock()
+        """Test filtering conversations from last 7 days (SQL handles filtering)."""
         now = datetime.now()
         five_days_ago = now - timedelta(days=5)
-        ten_days_ago = now - timedelta(days=10)
-
-        df = pd.DataFrame([
+        # SQL WHERE filters to within last 7 days
+        rows = _conv_rows([
             {
                 'conversation_id': 'conv-recent',
                 'project_id': 'project-a',
@@ -350,43 +395,24 @@ class TestGetAllConversationsEndpoint:
                 'updated_at': five_days_ago,
                 'message_count': 5,
                 'file_path': '/test/recent.jsonl',
-                'full_text': 'Recent conversation'
+                'full_text': 'Recent conversation',
             },
-            {
-                'conversation_id': 'conv-old',
-                'project_id': 'project-a',
-                'title': 'Old',
-                'created_at': ten_days_ago,
-                'updated_at': ten_days_ago,
-                'message_count': 5,
-                'file_path': '/test/old.jsonl',
-                'full_text': 'Old conversation'
-            }
-        ]).set_index('conversation_id', drop=False)
+        ])
 
-        mock_engine.conversations_df = df
+        response = self._get(client, rows, "?date=week")
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_engine):
-            response = client.get("/api/conversations/all?date=week")
+        assert response.status_code == 200
+        data = response.json()
 
-            assert response.status_code == 200
-            data = response.json()
-
-            # Should only have conversation from last 7 days
-            assert data["total"] == 1
-            assert data["results"][0]["conversation_id"] == "conv-recent"
+        assert data["total"] == 1
+        assert data["results"][0]["conversation_id"] == "conv-recent"
 
     def test_get_all_conversations_filter_by_date_month(self, client):
-        """Test filtering conversations from last 30 days."""
-        import pandas as pd
-        from datetime import datetime, timedelta
-
-        mock_engine = Mock()
+        """Test filtering conversations from last 30 days (SQL handles filtering)."""
         now = datetime.now()
         twenty_days_ago = now - timedelta(days=20)
-        forty_days_ago = now - timedelta(days=40)
-
-        df = pd.DataFrame([
+        # SQL WHERE filters to within last 30 days
+        rows = _conv_rows([
             {
                 'conversation_id': 'conv-recent',
                 'project_id': 'project-a',
@@ -395,50 +421,22 @@ class TestGetAllConversationsEndpoint:
                 'updated_at': twenty_days_ago,
                 'message_count': 5,
                 'file_path': '/test/recent.jsonl',
-                'full_text': 'Recent conversation'
+                'full_text': 'Recent conversation',
             },
-            {
-                'conversation_id': 'conv-old',
-                'project_id': 'project-a',
-                'title': 'Old',
-                'created_at': forty_days_ago,
-                'updated_at': forty_days_ago,
-                'message_count': 5,
-                'file_path': '/test/old.jsonl',
-                'full_text': 'Old conversation'
-            }
-        ]).set_index('conversation_id', drop=False)
+        ])
 
-        mock_engine.conversations_df = df
+        response = self._get(client, rows, "?date=month")
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_engine):
-            response = client.get("/api/conversations/all?date=month")
+        assert response.status_code == 200
+        data = response.json()
 
-            assert response.status_code == 200
-            data = response.json()
-
-            # Should only have conversation from last 30 days
-            assert data["total"] == 1
-            assert data["results"][0]["conversation_id"] == "conv-recent"
+        assert data["total"] == 1
+        assert data["results"][0]["conversation_id"] == "conv-recent"
 
     def test_get_all_conversations_filter_by_custom_date_range(self, client):
-        """Test filtering conversations with custom date range."""
-        import pandas as pd
-        from datetime import datetime
-
-        mock_engine = Mock()
-
-        df = pd.DataFrame([
-            {
-                'conversation_id': 'conv-jan-10',
-                'project_id': 'project-a',
-                'title': 'Jan 10',
-                'created_at': datetime(2025, 1, 10),
-                'updated_at': datetime(2025, 1, 10),
-                'message_count': 5,
-                'file_path': '/test/jan10.jsonl',
-                'full_text': 'Jan 10 conversation'
-            },
+        """Test filtering conversations with custom date range (SQL handles filtering)."""
+        # SQL WHERE filters to Jan 12-18 range
+        rows = _conv_rows([
             {
                 'conversation_id': 'conv-jan-15',
                 'project_id': 'project-a',
@@ -447,42 +445,23 @@ class TestGetAllConversationsEndpoint:
                 'updated_at': datetime(2025, 1, 15),
                 'message_count': 5,
                 'file_path': '/test/jan15.jsonl',
-                'full_text': 'Jan 15 conversation'
+                'full_text': 'Jan 15 conversation',
             },
-            {
-                'conversation_id': 'conv-jan-20',
-                'project_id': 'project-a',
-                'title': 'Jan 20',
-                'created_at': datetime(2025, 1, 20),
-                'updated_at': datetime(2025, 1, 20),
-                'message_count': 5,
-                'file_path': '/test/jan20.jsonl',
-                'full_text': 'Jan 20 conversation'
-            }
-        ]).set_index('conversation_id', drop=False)
+        ])
 
-        mock_engine.conversations_df = df
+        response = self._get(client, rows, "?date=custom&date_from=2025-01-12&date_to=2025-01-18")
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_engine):
-            response = client.get("/api/conversations/all?date=custom&date_from=2025-01-12&date_to=2025-01-18")
+        assert response.status_code == 200
+        data = response.json()
 
-            assert response.status_code == 200
-            data = response.json()
-
-            # Should only have Jan 15 (between Jan 12 and Jan 18 inclusive)
-            assert data["total"] == 1
-            assert data["results"][0]["conversation_id"] == "conv-jan-15"
+        assert data["total"] == 1
+        assert data["results"][0]["conversation_id"] == "conv-jan-15"
 
     def test_get_all_conversations_filter_combined(self, client):
-        """Test filtering by both project and date."""
-        import pandas as pd
-        from datetime import datetime, timedelta
-
-        mock_engine = Mock()
+        """Test filtering by both project and date (SQL handles filtering)."""
         now = datetime.now()
-        yesterday = now - timedelta(days=1)
-
-        df = pd.DataFrame([
+        # SQL WHERE filters to project-a AND today
+        rows = _conv_rows([
             {
                 'conversation_id': 'conv-a-today',
                 'project_id': 'project-a',
@@ -491,63 +470,44 @@ class TestGetAllConversationsEndpoint:
                 'updated_at': now,
                 'message_count': 5,
                 'file_path': '/test/a-today.jsonl',
-                'full_text': 'Project A today'
+                'full_text': 'Project A today',
             },
-            {
-                'conversation_id': 'conv-a-yesterday',
-                'project_id': 'project-a',
-                'title': 'A Yesterday',
-                'created_at': yesterday,
-                'updated_at': yesterday,
-                'message_count': 5,
-                'file_path': '/test/a-yesterday.jsonl',
-                'full_text': 'Project A yesterday'
-            },
-            {
-                'conversation_id': 'conv-b-today',
-                'project_id': 'project-b',
-                'title': 'B Today',
-                'created_at': now,
-                'updated_at': now,
-                'message_count': 5,
-                'file_path': '/test/b-today.jsonl',
-                'full_text': 'Project B today'
-            }
-        ]).set_index('conversation_id', drop=False)
+        ])
 
-        mock_engine.conversations_df = df
+        response = self._get(client, rows, "?project=project-a&date=today")
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_engine):
-            response = client.get("/api/conversations/all?project=project-a&date=today")
+        assert response.status_code == 200
+        data = response.json()
 
-            assert response.status_code == 200
-            data = response.json()
-
-            # Should only have project-a from today
-            assert data["total"] == 1
-            assert data["results"][0]["conversation_id"] == "conv-a-today"
+        assert data["total"] == 1
+        assert data["results"][0]["conversation_id"] == "conv-a-today"
 
 
+# ---------------------------------------------------------------------------
+# GET /api/conversation/{conversation_id}
+# ---------------------------------------------------------------------------
 @pytest.mark.unit
 class TestGetConversationEndpoint:
     """Tests for GET /api/conversation/{conversation_id} endpoint."""
 
-    def test_get_conversation_success(self, client, mock_search_engine, tmp_path):
+    def test_get_conversation_success(self, client, tmp_path):
         """Test successfully retrieving a conversation."""
-        # Create temporary JSONL file
         conv_file = tmp_path / "conv-1.jsonl"
         messages = [
             {"type": "user", "message": {"content": "Hello"}, "timestamp": "2025-01-01T10:00:00"},
-            {"type": "assistant", "message": {"content": "Hi there!"}, "timestamp": "2025-01-01T10:00:05"}
+            {"type": "assistant", "message": {"content": "Hi there!"}, "timestamp": "2025-01-01T10:00:05"},
         ]
         with open(conv_file, 'w') as f:
             for msg in messages:
                 f.write(json.dumps(msg) + '\n')
 
-        # Update mock to point to temp file (use conversation_id as index)
-        mock_search_engine.conversations_df.loc['conv-1', 'file_path'] = str(conv_file)
+        engine = _make_engine(_conv_dict(
+            conversation_id='conv-1',
+            title='Python Binary Search',
+            file_path=str(conv_file),
+        ))
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
+        with patch(PATCH_GET_ENGINE, return_value=engine):
             response = client.get("/api/conversation/conv-1")
 
             assert response.status_code == 200
@@ -555,6 +515,7 @@ class TestGetConversationEndpoint:
 
             assert data["conversation_id"] == "conv-1"
             assert data["title"] == "Python Binary Search"
+            assert data["tool"] == "claude"
             assert data["message_count"] == 2
             assert len(data["messages"]) == 2
             assert data["messages"][0]["role"] == "user"
@@ -562,38 +523,63 @@ class TestGetConversationEndpoint:
             assert data["messages"][1]["role"] == "assistant"
             assert data["messages"][1]["content"] == "Hi there!"
 
-    def test_get_conversation_not_in_index(self, client, mock_search_engine):
+    def test_get_conversation_not_in_index(self, client):
         """Test error when conversation not found in index."""
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
+        engine = _make_engine(get_conversation_return=None)
+
+        with patch(PATCH_GET_ENGINE, return_value=engine):
             response = client.get("/api/conversation/nonexistent")
 
             assert response.status_code == 404
             assert "not found in index" in response.json()["detail"]
 
-    def test_get_conversation_file_not_found(self, client, mock_search_engine):
+    def test_get_conversation_file_not_found(self, client):
         """Test error when conversation file doesn't exist."""
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
-            # conv-1 exists in index but file doesn't exist
+        engine = _make_engine(_conv_dict(
+            file_path='/nonexistent/path/conv-1.jsonl',
+        ))
+
+        with patch(PATCH_GET_ENGINE, return_value=engine):
             response = client.get("/api/conversation/conv-1")
 
             assert response.status_code == 404
             assert "file not found" in response.json()["detail"].lower()
 
-    def test_get_conversation_invalid_json(self, client, mock_search_engine, tmp_path):
+    def test_get_conversation_invalid_json(self, client, tmp_path):
         """Test error handling for invalid JSON in conversation file."""
         conv_file = tmp_path / "invalid.jsonl"
         with open(conv_file, 'w') as f:
             f.write("invalid json\n")
 
-        mock_search_engine.conversations_df.loc['conv-1', 'file_path'] = str(conv_file)
+        engine = _make_engine(_conv_dict(file_path=str(conv_file)))
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
+        with patch(PATCH_GET_ENGINE, return_value=engine):
             response = client.get("/api/conversation/conv-1")
 
             assert response.status_code == 500
-            assert "invalid JSON" in response.json()["detail"]
+            assert "No valid JSON objects" in response.json()["detail"]
 
-    def test_get_conversation_with_list_content(self, client, mock_search_engine, tmp_path):
+    def test_get_conversation_rejects_partially_corrupt_jsonl(self, client, tmp_path):
+        """Test that partially malformed JSONL files fail with line diagnostics."""
+        conv_file = tmp_path / "partial-invalid.jsonl"
+        with open(conv_file, 'w') as f:
+            f.write(json.dumps({
+                "type": "user",
+                "message": {"content": "Hello"},
+                "timestamp": "2025-01-01T10:00:00",
+            }) + '\n')
+            f.write('{"type": "assistant", "message": {"content": "broken"}\n')
+
+        engine = _make_engine(_conv_dict(file_path=str(conv_file)))
+
+        with patch(PATCH_GET_ENGINE, return_value=engine):
+            response = client.get("/api/conversation/conv-1")
+
+            assert response.status_code == 500
+            assert "Malformed JSONL" in response.json()["detail"]
+            assert "line 2" in response.json()["detail"]
+
+    def test_get_conversation_with_list_content(self, client, tmp_path):
         """Test handling of content as list (text blocks)."""
         conv_file = tmp_path / "conv-list.jsonl"
         messages = [
@@ -602,72 +588,144 @@ class TestGetConversationEndpoint:
                 "message": {
                     "content": [
                         {"type": "text", "text": "First block"},
-                        {"type": "text", "text": "Second block"}
+                        {"type": "text", "text": "Second block"},
                     ]
                 },
-                "timestamp": "2025-01-01T10:00:00"
+                "timestamp": "2025-01-01T10:00:00",
             }
         ]
         with open(conv_file, 'w') as f:
             for msg in messages:
                 f.write(json.dumps(msg) + '\n')
 
-        mock_search_engine.conversations_df.loc['conv-1', 'file_path'] = str(conv_file)
+        engine = _make_engine(_conv_dict(file_path=str(conv_file)))
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
+        with patch(PATCH_GET_ENGINE, return_value=engine):
             response = client.get("/api/conversation/conv-1")
 
             assert response.status_code == 200
             data = response.json()
 
-            # Content from list should be joined with newlines
             assert "First block\n\nSecond block" in data["messages"][0]["content"]
 
-    def test_get_conversation_skips_non_user_assistant_messages(self, client, mock_search_engine, tmp_path):
+    def test_get_conversation_skips_non_user_assistant_messages(self, client, tmp_path):
         """Test that only user/assistant messages are included."""
         conv_file = tmp_path / "conv-mixed.jsonl"
         messages = [
             {"type": "user", "message": {"content": "User message"}, "timestamp": "2025-01-01T10:00:00"},
             {"type": "system", "message": {"content": "System message"}, "timestamp": "2025-01-01T10:00:01"},
-            {"type": "assistant", "message": {"content": "Assistant message"}, "timestamp": "2025-01-01T10:00:02"}
+            {"type": "assistant", "message": {"content": "Assistant message"}, "timestamp": "2025-01-01T10:00:02"},
         ]
         with open(conv_file, 'w') as f:
             for msg in messages:
                 f.write(json.dumps(msg) + '\n')
 
-        mock_search_engine.conversations_df.loc['conv-1', 'file_path'] = str(conv_file)
+        engine = _make_engine(_conv_dict(file_path=str(conv_file)))
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
+        with patch(PATCH_GET_ENGINE, return_value=engine):
             response = client.get("/api/conversation/conv-1")
 
             assert response.status_code == 200
             data = response.json()
 
-            # Should only have 2 messages (user and assistant, not system)
             assert len(data["messages"]) == 2
             assert data["messages"][0]["role"] == "user"
             assert data["messages"][1]["role"] == "assistant"
 
+    def test_get_conversation_with_duplicate_ids(self, client, tmp_path):
+        """Test that get_conversation returns a single dict (no duplicate handling needed)."""
+        conv_file = tmp_path / "conv-dup.jsonl"
+        with open(conv_file, 'w') as f:
+            f.write(json.dumps({"type": "user", "message": {"content": "Test"}, "timestamp": "2025-01-01T10:00:00"}) + '\n')
 
-@pytest.mark.unit
-class TestResumeSessionEndpoint:
-    """Tests for POST /api/resume endpoint."""
+        # get_conversation returns a single dict — duplicates are a storage-layer concern
+        engine = _make_engine(_conv_dict(
+            conversation_id='dup-id',
+            title='First',
+            file_path=str(conv_file),
+            message_count=1,
+        ))
 
-    def test_resume_claude_session_success(self, client, mock_search_engine, mock_platform_manager, tmp_path):
-        """Test successfully resuming a Claude Code session."""
-        # Create Claude JSONL file with cwd
-        conv_file = tmp_path / "conv-1.jsonl"
+        with patch(PATCH_GET_ENGINE, return_value=engine):
+            response = client.get("/api/conversation/dup-id")
+
+            assert response.status_code == 200
+            assert response.json()["title"] == "First"
+
+    def test_get_conversation_codex_session_success(self, client, tmp_path):
+        """Test successfully retrieving a Codex session conversation."""
+        codex_dir = tmp_path / ".codex" / "sessions" / "2025" / "01" / "01"
+        codex_dir.mkdir(parents=True)
+        conv_file = codex_dir / "rollout.jsonl"
         messages = [
-            {"type": "user", "cwd": "/home/user/project", "message": {"content": "Test"}},
-            {"type": "assistant", "message": {"content": "Response"}}
+            {"type": "session_meta", "payload": {"id": "codex-1", "cwd": "D:\\projects\\searchat"}},
+            {
+                "type": "response_item",
+                "timestamp": "2025-01-01T10:00:00Z",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Investigate watcher issue"}],
+                },
+            },
+            {
+                "type": "response_item",
+                "timestamp": "2025-01-01T10:00:01Z",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Tracing the agent provider path now."}],
+                },
+            },
         ]
         with open(conv_file, 'w') as f:
             for msg in messages:
                 f.write(json.dumps(msg) + '\n')
 
-        mock_search_engine.conversations_df.loc['conv-1', 'file_path'] = str(conv_file)
+        engine = _make_engine(_conv_dict(
+            conversation_id='codex-1',
+            title='Codex Session',
+            file_path=str(conv_file),
+        ))
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
+        with patch(PATCH_GET_ENGINE, return_value=engine):
+            response = client.get("/api/conversation/codex-1")
+
+            assert response.status_code == 200
+            data = response.json()
+
+            assert data["tool"] == "codex"
+            assert data["message_count"] == 2
+            assert data["messages"][0]["role"] == "user"
+            assert data["messages"][0]["content"] == "Investigate watcher issue"
+            assert data["messages"][1]["role"] == "assistant"
+            assert data["messages"][1]["content"] == "Tracing the agent provider path now."
+
+
+# ---------------------------------------------------------------------------
+# POST /api/resume
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+class TestResumeSessionEndpoint:
+    """Tests for POST /api/resume endpoint."""
+
+    def test_resume_claude_session_success(self, client, mock_platform_manager, tmp_path):
+        """Test successfully resuming a Claude Code session."""
+        conv_file = tmp_path / "conv-1.jsonl"
+        messages = [
+            {"type": "user", "cwd": "/home/user/project", "message": {"content": "Test"}},
+            {"type": "assistant", "message": {"content": "Response"}},
+        ]
+        with open(conv_file, 'w') as f:
+            for msg in messages:
+                f.write(json.dumps(msg) + '\n')
+
+        engine = _make_engine(_conv_dict(
+            conversation_id='conv-1',
+            file_path=str(conv_file),
+        ))
+
+        with patch(PATCH_GET_ENGINE, return_value=engine):
             with patch('searchat.api.routers.conversations.get_platform_manager', return_value=mock_platform_manager):
                 response = client.post("/api/resume", json={"conversation_id": "conv-1"})
 
@@ -680,12 +738,10 @@ class TestResumeSessionEndpoint:
                 assert "claude --resume conv-1" in data["command"]
                 assert data["platform"] == "windows"
 
-                # Verify terminal was opened
                 mock_platform_manager.open_terminal_with_command.assert_called_once()
 
-    def test_resume_vibe_session_success(self, client, mock_search_engine, mock_platform_manager, tmp_path):
+    def test_resume_vibe_session_success(self, client, mock_platform_manager, tmp_path):
         """Test successfully resuming a Vibe session."""
-        # Create Vibe JSON file
         conv_file = tmp_path / "session_123.json"
         vibe_data = {
             "metadata": {
@@ -693,27 +749,20 @@ class TestResumeSessionEndpoint:
                     "working_directory": "/home/user/vibe-project"
                 }
             },
-            "messages": []
+            "messages": [],
         }
         with open(conv_file, 'w') as f:
             json.dump(vibe_data, f)
 
-        # Update mock for Vibe file
-        import pandas as pd
-        now = datetime.now()
-        df = pd.DataFrame([{
-            'conversation_id': 'session_123',
-            'project_id': 'vibe-project',
-            'title': 'Vibe Session',
-            'created_at': now,
-            'updated_at': now,
-            'message_count': 5,
-            'file_path': str(conv_file),
-            'full_text': 'Vibe conversation'
-        }])
-        mock_search_engine.conversations_df = df.set_index('conversation_id', drop=False)
+        engine = _make_engine(_conv_dict(
+            conversation_id='session_123',
+            project_id='vibe-project',
+            title='Vibe Session',
+            file_path=str(conv_file),
+            message_count=5,
+        ))
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
+        with patch(PATCH_GET_ENGINE, return_value=engine):
             with patch('searchat.api.routers.conversations.get_platform_manager', return_value=mock_platform_manager):
                 response = client.post("/api/resume", json={"conversation_id": "session_123"})
 
@@ -725,31 +774,72 @@ class TestResumeSessionEndpoint:
                 assert data["cwd"] == "/home/user/vibe-project"
                 assert "vibe --resume session_123" in data["command"]
 
-    def test_resume_conversation_not_found(self, client, mock_search_engine, mock_platform_manager):
+    def test_resume_codex_session_success(self, client, mock_platform_manager, tmp_path):
+        """Test successfully resuming a Codex session."""
+        codex_dir = tmp_path / ".codex" / "sessions" / "2025" / "01" / "01"
+        codex_dir.mkdir(parents=True)
+        conv_file = codex_dir / "rollout.jsonl"
+        lines = [
+            {"type": "session_meta", "payload": {"id": "codex-1", "cwd": "D:\\projects\\searchat"}},
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Test"}],
+                },
+            },
+        ]
+        with open(conv_file, 'w') as f:
+            for line in lines:
+                f.write(json.dumps(line) + '\n')
+
+        engine = _make_engine(_conv_dict(
+            conversation_id='codex-1',
+            file_path=str(conv_file),
+        ))
+
+        with patch(PATCH_GET_ENGINE, return_value=engine):
+            with patch('searchat.api.routers.conversations.get_platform_manager', return_value=mock_platform_manager):
+                response = client.post("/api/resume", json={"conversation_id": "codex-1"})
+
+                assert response.status_code == 200
+                data = response.json()
+
+                assert data["success"] is True
+                assert data["tool"] == "codex"
+                assert data["cwd"] == "D:\\projects\\searchat"
+                assert "codex resume codex-1" in data["command"]
+
+    def test_resume_conversation_not_found(self, client, mock_platform_manager):
         """Test error when conversation doesn't exist."""
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
+        engine = _make_engine(get_conversation_return=None)
+
+        with patch(PATCH_GET_ENGINE, return_value=engine):
             with patch('searchat.api.routers.conversations.get_platform_manager', return_value=mock_platform_manager):
                 response = client.post("/api/resume", json={"conversation_id": "nonexistent"})
 
                 assert response.status_code == 404
                 assert "not found" in response.json()["detail"]
 
-    def test_resume_unknown_format(self, client, mock_search_engine, mock_platform_manager, tmp_path):
+    def test_resume_unknown_format(self, client, mock_platform_manager, tmp_path):
         """Test error for unknown conversation format."""
-        # Create file with unknown extension
         conv_file = tmp_path / "conv.txt"
         conv_file.write_text("unknown format")
 
-        mock_search_engine.conversations_df.loc['conv-1', 'file_path'] = str(conv_file)
+        engine = _make_engine(_conv_dict(
+            conversation_id='conv-1',
+            file_path=str(conv_file),
+        ))
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
+        with patch(PATCH_GET_ENGINE, return_value=engine):
             with patch('searchat.api.routers.conversations.get_platform_manager', return_value=mock_platform_manager):
                 response = client.post("/api/resume", json={"conversation_id": "conv-1"})
 
                 assert response.status_code == 400
                 assert "Unknown conversation format" in response.json()["detail"]
 
-    def test_resume_with_path_normalization(self, client, mock_search_engine, mock_platform_manager, tmp_path):
+    def test_resume_with_path_normalization(self, client, mock_platform_manager, tmp_path):
         """Test that paths are normalized for the platform."""
         conv_file = tmp_path / "conv-1.jsonl"
         messages = [{"type": "user", "cwd": "/mnt/c/Users/Test/project", "message": {"content": "Test"}}]
@@ -757,43 +847,45 @@ class TestResumeSessionEndpoint:
             for msg in messages:
                 f.write(json.dumps(msg) + '\n')
 
-        mock_search_engine.conversations_df.loc['conv-1', 'file_path'] = str(conv_file)
+        engine = _make_engine(_conv_dict(
+            conversation_id='conv-1',
+            file_path=str(conv_file),
+        ))
 
-        # Mock normalize_path to convert WSL to Windows
         mock_platform_manager.normalize_path = Mock(return_value="C:\\Users\\Test\\project")
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
+        with patch(PATCH_GET_ENGINE, return_value=engine):
             with patch('searchat.api.routers.conversations.get_platform_manager', return_value=mock_platform_manager):
                 response = client.post("/api/resume", json={"conversation_id": "conv-1"})
 
                 assert response.status_code == 200
                 data = response.json()
 
-                # Path should be normalized
                 assert data["cwd"] == "C:\\Users\\Test\\project"
                 mock_platform_manager.normalize_path.assert_called_once_with("/mnt/c/Users/Test/project")
 
-    def test_resume_without_cwd(self, client, mock_search_engine, mock_platform_manager, tmp_path):
+    def test_resume_without_cwd(self, client, mock_platform_manager, tmp_path):
         """Test resuming when no cwd is found in conversation."""
         conv_file = tmp_path / "conv-1.jsonl"
         messages = [
             {"type": "user", "message": {"content": "Test"}},  # No cwd
-            {"type": "assistant", "message": {"content": "Response"}}
+            {"type": "assistant", "message": {"content": "Response"}},
         ]
         with open(conv_file, 'w') as f:
             for msg in messages:
                 f.write(json.dumps(msg) + '\n')
 
-        mock_search_engine.conversations_df.loc['conv-1', 'file_path'] = str(conv_file)
+        engine = _make_engine(_conv_dict(
+            conversation_id='conv-1',
+            file_path=str(conv_file),
+        ))
 
-        with patch('searchat.api.routers.conversations.get_search_engine', return_value=mock_search_engine):
+        with patch(PATCH_GET_ENGINE, return_value=engine):
             with patch('searchat.api.routers.conversations.get_platform_manager', return_value=mock_platform_manager):
                 response = client.post("/api/resume", json={"conversation_id": "conv-1"})
 
                 assert response.status_code == 200
                 data = response.json()
 
-                # cwd should be None
                 assert data["cwd"] is None
-                # Should still open terminal
                 mock_platform_manager.open_terminal_with_command.assert_called_once()

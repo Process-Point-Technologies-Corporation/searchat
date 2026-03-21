@@ -33,7 +33,7 @@ index_interval_minutes = 30
 max_workers = 8
 
 [search]
-default_mode = "hybrid"
+default_mode = "cross-layer"
 max_results = 100
 snippet_length = 200
 
@@ -58,3 +58,4 @@ enable_profiling = false
 #
 # export SEARCHAT_WINDOWS_PROJECTS_DIR=/home/alice/.claude
 # export SEARCHAT_PORT=8001  # Different port per user
+

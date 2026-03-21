@@ -92,7 +92,6 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
 
-from searchat.core import ConversationIndexer, SearchEngine
 from searchat.services import BackupManager
 from searchat.config import Config
 
@@ -193,32 +192,9 @@ def sample_vibe_conversation(tmp_path) -> Path:
 
 
 @pytest.fixture
-def indexer(temp_data_dir):
-    """ConversationIndexer instance with temporary directory."""
-    config = Config.load()
-    return ConversationIndexer(temp_data_dir, config)
-
-
-@pytest.fixture
-def search_engine(temp_data_dir):
-    """SearchEngine instance with temporary directory."""
-    config = Config.load()
-    return SearchEngine(temp_data_dir, config)
-
-
-@pytest.fixture
 def backup_manager(temp_search_dir):
     """BackupManager instance with temporary directory."""
     return BackupManager(temp_search_dir)
-
-
-@pytest.fixture
-def test_client():
-    """FastAPI test client."""
-    from fastapi.testclient import TestClient
-    from searchat.web_api import app
-
-    return TestClient(app)
 
 
 @pytest.fixture
@@ -256,3 +232,27 @@ def sample_config(tmp_path) -> Dict[str, Any]:
             "overlap": 100,
         }
     }
+
+
+# ============================================================================
+# PALACE FIXTURES
+# ============================================================================
+
+@pytest.fixture
+def palace_data_dir(tmp_path):
+    """Temporary data directory for palace tests."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "indices").mkdir()
+    return data_dir
+
+
+@pytest.fixture
+def palace_search_dir(tmp_path):
+    """Temporary search directory with palace-ready structure."""
+    search_dir = tmp_path / ".searchat"
+    data_dir = search_dir / "data"
+    data_dir.mkdir(parents=True)
+    (data_dir / "indices").mkdir()
+    (data_dir / "conversations").mkdir()
+    return search_dir

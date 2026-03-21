@@ -255,10 +255,15 @@ class BackupManager:
             logger.error(f"Backup missing data directory: {data_dir}")
             return False
 
-        # Check for parquet files (the critical data)
-        parquet_files = list(data_dir.glob("*.parquet"))
-        if not parquet_files:
-            logger.error(f"Backup contains no parquet files in: {data_dir}")
+        # Check for critical data files — DuckDB (primary) or legacy parquet
+        has_duckdb = (data_dir / "searchat.duckdb").exists()
+        has_parquet = bool(list(data_dir.glob("conversations/*.parquet")))
+
+        if not has_duckdb and not has_parquet:
+            logger.error(
+                f"Backup contains neither searchat.duckdb nor conversation "
+                f"parquet files in: {data_dir}"
+            )
             return False
 
         logger.info(f"Backup validation passed: {backup_path.name}")

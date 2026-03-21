@@ -196,9 +196,4 @@ subprocess.Popen(f'cmd.exe /c start cmd.exe /k {command}', shell=True)
 4. **Path Validation**: Verify paths exist before launching terminal
 5. **Error Handling**: Better error messages for missing terminal emulators or invalid paths
 
-## References
 
-- Reference document: `C:\Users\Syd\Downloads\Cross-platform terminal launching in Python.md`
-- Original plan: Session transcript `7f9f5749-3dd0-4632-af91-8766e5f3e220.jsonl`
-- Microsoft WSL docs: Execution aliases limitation
-- Python subprocess docs: Platform-specific flags

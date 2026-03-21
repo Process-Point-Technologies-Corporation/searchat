@@ -103,7 +103,7 @@ class CLIDistillationLLM(DistillationLLM):
     def __init__(
         self,
         provider: str = "auto",
-        model: str = "claude-haiku-4-5-20251001",
+        model: str = DEFAULT_DISTILLATION_CLI_MODEL,
         prompt_template: Optional[str] = None,
     ):
         requested = (provider or "auto").strip().lower()
@@ -113,18 +113,26 @@ class CLIDistillationLLM(DistillationLLM):
         self.prompt_template = prompt_template or DEFAULT_DISTILLATION_PROMPT
 
     def distill(self, inputs: List[DistillationInput]) -> List[DistillationOutput]:
+        # Cache CLI path and session snapshot across the batch
+        cli_path = self._find_cli()
+        session_dir = self._get_session_dir()
+        before_jsonls = self._snapshot_jsonl_files(session_dir)
+
         results = []
-        for inp in inputs:
-            prompt = self._build_prompt(inp)
-            try:
-                raw = self._invoke_cli(prompt)
-            except subprocess.TimeoutExpired as e:
-                raise RuntimeError(
-                    f"{self.provider} distillation CLI timed out for exchange plies "
-                    f"{inp.ply_start}-{inp.ply_end}"
-                ) from e
-            output = self._parse_response(raw)
-            results.append(output)
+        try:
+            for inp in inputs:
+                prompt = self._build_prompt(inp)
+                try:
+                    raw = self._invoke_cli(prompt, cli_path=cli_path)
+                except subprocess.TimeoutExpired as e:
+                    raise RuntimeError(
+                        f"{self.provider} distillation CLI timed out for exchange plies "
+                        f"{inp.ply_start}-{inp.ply_end}"
+                    ) from e
+                output = self._parse_response(raw)
+                results.append(output)
+        finally:
+            self._cleanup_side_effect_jsonls(session_dir, before_jsonls)
         return results
 
     def _build_prompt(self, inp: DistillationInput) -> str:
@@ -139,10 +147,9 @@ class CLIDistillationLLM(DistillationLLM):
             messages_text=messages_text,
         )
 
-    def _invoke_cli(self, prompt: str) -> str:
-        cli_path = self._find_cli()
-        session_dir = self._get_session_dir()
-        before_jsonls = self._snapshot_jsonl_files(session_dir)
+    def _invoke_cli(self, prompt: str, cli_path: str | None = None) -> str:
+        if cli_path is None:
+            cli_path = self._find_cli()
         raw = ""
         output_path: Optional[Path] = None
         schema_path: Optional[Path] = None
@@ -160,7 +167,6 @@ class CLIDistillationLLM(DistillationLLM):
             )
             raw = self._extract_output(result, output_path)
         finally:
-            self._cleanup_side_effect_jsonls(session_dir, before_jsonls)
             for temp_path in (output_path, schema_path):
                 if temp_path is None:
                     continue
@@ -351,7 +357,19 @@ class CLIDistillationLLM(DistillationLLM):
         output_path: Optional[Path],
     ) -> str:
         if self.provider == "claude":
-            return (result.stdout or "").strip()
+            raw = (result.stdout or "").strip()
+            # Claude CLI with --output-format json wraps the response in a
+            # metadata envelope. Extract structured_output or result field.
+            if raw.startswith("{"):
+                try:
+                    envelope = json.loads(raw)
+                    if "structured_output" in envelope and envelope["structured_output"]:
+                        return json.dumps(envelope["structured_output"])
+                    if "result" in envelope and envelope["result"]:
+                        return envelope["result"]
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            return raw
 
         if output_path is None or not output_path.exists():
             return ""

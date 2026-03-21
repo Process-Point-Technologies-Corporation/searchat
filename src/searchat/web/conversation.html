@@ -153,13 +153,18 @@
         }
 
         .tool-badge.claude {
-            background: rgba(74, 158, 255, 0.15);
+            background: rgba(59, 130, 246, 0.15);
             color: var(--accent-primary);
         }
 
         .tool-badge.vibe {
-            background: rgba(255, 149, 0, 0.15);
+            background: rgba(234, 88, 12, 0.15);
             color: var(--warning);
+        }
+
+        .tool-badge.codex {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--success);
         }
 
         /* Resume button */
@@ -307,8 +312,8 @@
                 conversationData = data;
 
                 // Detect tool from file_path
-                const tool = data.file_path.endsWith('.jsonl') ? 'claude' : 'vibe';
-                const toolLabel = tool === 'claude' ? 'Claude Code' : 'Vibe';
+                const tool = data.tool || (data.file_path.endsWith('.jsonl') ? 'claude' : 'vibe');
+                const toolLabel = tool === 'claude' ? 'Claude Code' : (tool === 'codex' ? 'Codex' : 'Vibe');
 
                 div.innerHTML = `
                     <div class="header">
@@ -334,12 +339,18 @@
                     data.messages.forEach((msg, i) => {
                         const msgDiv = document.createElement('div');
                         msgDiv.className = `message ${msg.role || 'unknown'}`;
+                        // Use raw JSONL ply index as DOM id (matches search result ply_start/ply_end)
+                        const plyId = msg.ply_index != null ? msg.ply_index : i;
+                        msgDiv.id = `ply-${plyId}`;
                         msgDiv.innerHTML = `
                             <div class="role">${(msg.role || 'unknown').toUpperCase()} - Message ${i + 1}</div>
                             <div class="content">${escapeHtml((msg.content || '').substring(0, 2000))}${(msg.content || '').length > 2000 ? '...[truncated]' : ''}</div>
                         `;
                         div.appendChild(msgDiv);
                     });
+
+                    // Scroll to exchange if ply_start is in URL params
+                    scrollToExchange();
                 } else {
                     div.innerHTML += '<div class="message">No messages available</div>';
                 }
@@ -480,6 +491,58 @@
             a.download = `conversation-${conversationId.slice(-8)}.html`;
             a.click();
             URL.revokeObjectURL(url);
+        }
+
+        function scrollToExchange() {
+            const params = new URLSearchParams(window.location.search);
+            const plyStart = params.get('ply_start');
+            const plyEnd = params.get('ply_end');
+            if (plyStart == null) return;
+
+            const start = parseInt(plyStart);
+            const end = plyEnd != null ? parseInt(plyEnd) : start;
+
+            // Collect all message elements with their ply indices
+            const allMsgs = document.querySelectorAll('[id^="ply-"]');
+            const plyElements = [];
+            allMsgs.forEach(el => {
+                const idx = parseInt(el.id.replace('ply-', ''));
+                if (!isNaN(idx)) plyElements.push({ el, idx });
+            });
+
+            // Highlight messages within the exchange ply range
+            let highlighted = 0;
+            for (const { el, idx } of plyElements) {
+                if (idx >= start && idx <= end) {
+                    el.style.boxShadow = '0 0 0 2px var(--accent-primary)';
+                    el.style.background = 'var(--bg-elevated)';
+                    highlighted++;
+                }
+            }
+
+            // Find scroll target: first highlighted, or nearest message to ply_start
+            let target = null;
+            if (highlighted > 0) {
+                target = plyElements.find(p => p.idx >= start && p.idx <= end)?.el;
+            } else {
+                // No displayable messages in range (all tool blocks).
+                // Find nearest message after ply_start, then try before.
+                const after = plyElements.filter(p => p.idx > end);
+                const before = plyElements.filter(p => p.idx < start);
+                if (after.length > 0) {
+                    target = after[0].el;
+                    target.style.boxShadow = '0 0 0 2px var(--warning)';
+                    target.style.background = 'var(--bg-elevated)';
+                } else if (before.length > 0) {
+                    target = before[before.length - 1].el;
+                    target.style.boxShadow = '0 0 0 2px var(--warning)';
+                    target.style.background = 'var(--bg-elevated)';
+                }
+            }
+
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
         }
 
         loadConversation();

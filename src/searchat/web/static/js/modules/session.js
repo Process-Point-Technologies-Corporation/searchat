@@ -19,7 +19,7 @@ export async function restoreSearchState() {
 
     const state = JSON.parse(stateStr);
     document.getElementById('search').value = state.query || '';
-    document.getElementById('mode').value = state.mode || 'hybrid';
+    document.getElementById('mode').value = state.mode || 'distill';
     document.getElementById('project').value = state.project || '';
     document.getElementById('date').value = state.date || '';
     document.getElementById('dateFrom').value = state.dateFrom || '';
@@ -30,7 +30,13 @@ export async function restoreSearchState() {
     const { toggleCustomDate } = await import('./search.js');
     toggleCustomDate();
 
-    // Re-run the search to restore results with proper click handlers
+    // Restore based on action type
+    if (state.action === 'showAll') {
+        const { showAllConversations } = await import('./search.js');
+        showAllConversations();
+        return true;
+    }
+
     if (state.query) {
         const { search } = await import('./search.js');
         search();

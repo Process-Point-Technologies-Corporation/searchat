@@ -4,19 +4,19 @@
 
 ### Prerequisites
 
-- Python 3.9 or higher
+- Python 3.9+
 - Git
-- Virtual environment tool (venv, conda, etc.)
+- A virtual environment tool (`venv`, `uv`, `conda`, or similar)
 
 ### Initial Setup
 
-1. **Clone the repository**
+1. Clone the repository.
    ```bash
    git clone https://github.com/Process-Point-Technologies-Corporation/searchat.git
    cd searchat
    ```
 
-2. **Create virtual environment**
+2. Create and activate a virtual environment.
    ```bash
    python -m venv .venv
 
@@ -27,326 +27,106 @@
    source .venv/bin/activate
    ```
 
-3. **Install dependencies**
+3. Install the package with development dependencies.
    ```bash
-   pip install -e ".[dev]"  # Install with dev dependencies
+   pip install -e ".[dev]"
    ```
 
-4. **Run setup**
+4. Run first-time setup.
    ```bash
    python -m searchat.setup
    ```
 
-### Development Workflow
+## Development Workflow
 
-1. **Create a feature branch**
+1. Create a feature branch.
    ```bash
-   git checkout -b feature/your-feature-name
+   git checkout -b feature/your-change
    ```
 
-2. **Make your changes**
-   - Write clear, documented code
-   - Follow existing code style
-   - Add tests for new functionality
-   - Update documentation as needed
+2. Make focused changes.
+   - Keep user-facing behavior coherent.
+   - Add or update tests when behavior changes.
+   - Update docs/examples if commands or API behavior change.
 
-3. **Test your changes**
+3. Run relevant tests.
    ```bash
-   # Run all tests
+   # Full suite
    pytest
 
-   # Run specific test suite
-   pytest tests/api/              # API endpoint tests
-   pytest tests/test_indexer.py   # Indexer tests
+   # Focused suites
+   pytest tests/api/
+   pytest tests/core/
+   pytest tests/palace/
+   pytest tests/unit/
 
-   # Run with coverage
-   pytest --cov=searchat --cov-report=html
-
-   # Test manually
-   searchat-web           # Web interface
-   searchat "test query"  # CLI
+   # One file
+   pytest tests/api/test_search_routes.py
    ```
 
-4. **Commit your changes**
+4. Run a manual smoke check when relevant.
+   ```bash
+   python -m searchat.setup
+   searchat-web
+   searchat "test query"
+   searchat-hardware --show
+   ```
+
+5. Commit with a clear message.
    ```bash
    git add .
-   git commit -m "Brief description of changes"
+   git commit -m "Describe the change"
    ```
 
-5. **Push and create pull request**
-   ```bash
-   git push origin feature/your-feature-name
-   ```
+## Project Shape
 
-## Code Style Guidelines
+Public product areas:
+- `src/searchat/api/` - FastAPI app and routers
+- `src/searchat/core/` - indexing, search, storage, watcher logic
+- `src/searchat/palace/` - distilled retrieval components
+- `src/searchat/agents/` - provider detection and integrations
+- `src/searchat/web/` - packaged web UI assets
+- `tests/` - public tool tests only
 
-### Python Style
+Key user-facing search modes:
+- `cross-layer`
+- `verbatim`
+- `distill`
 
-- Follow PEP 8
-- Use type hints for function signatures
-- Maximum line length: 100 characters
-- Use docstrings for all public functions and classes
+## Code Guidelines
 
-**Example:**
-```python
-def search_conversations(
-    query: str,
-    mode: SearchMode = SearchMode.HYBRID,
-    max_results: int = 100
-) -> List[SearchResult]:
-    """
-    Search conversations with the given query.
+- Follow existing style and keep changes localized.
+- Use type hints on public functions and data models.
+- Keep constants in configuration/constants modules rather than scattering literals.
+- Prefer explicit errors over silent fallback behavior.
+- Update examples and docs when changing CLI/API/config behavior.
 
-    Args:
-        query: Search query string
-        mode: Search mode (keyword, semantic, or hybrid)
-        max_results: Maximum number of results to return
+## Testing Guidance
 
-    Returns:
-        List of SearchResult objects
-    """
-    pass
-```
+Current test layout:
+- `tests/api/` - API route behavior
+- `tests/core/` - unified storage/index/search internals
+- `tests/palace/` - distillation and distilled retrieval logic
+- `tests/unit/` - smaller isolated units
+- `tests/hooks/` - hook-specific behavior
 
-### Configuration
+Guidelines:
+- Use synthetic fixtures only.
+- Do not add tests that depend on non-public data or external local state.
+- Keep platform-path fixtures generic.
+- Mock external CLIs and network-like interactions.
 
-- Put magic numbers in `constants.py`
-- Use environment variables for user-specific settings
-- Document all configuration options
-
-### Error Handling
-
-- Use specific exceptions, not bare `except:`
-- Provide helpful error messages
-- Include recovery suggestions in error text
-
-**Good:**
-```python
-if not config_file.exists():
-    raise FileNotFoundError(
-        f"Configuration file not found: {config_file}\n"
-        f"Run 'python -m searchat.setup' to create it."
-    )
-```
-
-**Bad:**
-```python
-try:
-    load_config()
-except:
-    pass
-```
-
-## Testing
-
-### Running Tests
-
+Useful commands:
 ```bash
-# Run all tests
-pytest
-
-# Run specific test suite
-pytest tests/api/                      # API endpoint tests (62 tests)
-pytest tests/test_indexer.py           # Core indexer tests
-
-# Run specific test
-pytest tests/api/test_search_routes.py::TestSearchEndpoint::test_search_mode_hybrid
-
-# Run with coverage
 pytest --cov=searchat --cov-report=html
-
-# Exclude slow tests
 pytest -m "not slow"
 ```
 
-### Test Organization
+## Pull Requests
 
-```
-tests/
-├── conftest.py                   # Shared fixtures
-├── test_*.py                     # Core unit tests
-└── api/                          # API endpoint tests
-    ├── test_search_routes.py
-    ├── test_conversations_routes.py
-    ├── test_stats_backup_routes.py
-    └── test_indexing_admin_routes.py
-```
+Before opening a PR:
+- Tests for changed behavior pass locally.
+- Docs/examples/config are updated if needed.
+- No local junk, generated artifacts, or machine-specific paths are included.
+- Public API/docs stay tool-focused.
 
-### Writing Tests
-
-- Place unit tests in `tests/`
-- Place API tests in `tests/api/`
-- Name test files `test_*.py`
-- Use descriptive test names explaining what's being tested
-- Include both positive and negative test cases
-- Mock external dependencies (SearchEngine, BackupManager)
-- Use pytest fixtures from `conftest.py`
-
-**Unit Test Example:**
-```python
-def test_search_returns_results():
-    """Test that search returns results for valid query."""
-    engine = SearchEngine(config)
-    results = engine.search("test query")
-    assert len(results) > 0
-```
-
-**API Test Example:**
-```python
-from unittest.mock import Mock, patch
-
-def test_search_endpoint(client, mock_search_engine):
-    """Test search endpoint returns results."""
-    with patch('searchat.api.routers.search.get_search_engine', return_value=mock_search_engine):
-        response = client.get("/api/search?q=test&mode=hybrid")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert "results" in data
-        assert data["mode_used"] == "hybrid"
-```
-
-## Pull Request Process
-
-### Before Submitting
-
-- [ ] Code follows style guidelines
-- [ ] Tests pass locally
-- [ ] New tests added for new features
-- [ ] Documentation updated
-- [ ] Commit messages are clear
-- [ ] No merge conflicts with main
-
-### PR Description Template
-
-```markdown
-## Description
-Brief description of what this PR does.
-
-## Type of Change
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Breaking change
-- [ ] Documentation update
-
-## Testing
-How was this tested? What edge cases were considered?
-
-## Checklist
-- [ ] Code follows project style guidelines
-- [ ] Tests pass
-- [ ] Documentation updated
-- [ ] No breaking changes (or documented if unavoidable)
-```
-
-### Review Process
-
-1. Automated checks will run on your PR
-2. Maintainers will review your code
-3. Address any feedback or requested changes
-4. Once approved, your PR will be merged
-
-## Areas for Contribution
-
-### High Priority
-
-- Cross-platform testing (Windows, WSL, Linux, macOS)
-- Performance optimizations
-- Better error messages
-- Additional search modes or filters
-- Documentation improvements
-
-### Good First Issues
-
-Look for issues labeled `good-first-issue` in the issue tracker. These are typically:
-- Documentation updates
-- Small bug fixes
-- Code cleanup
-- Test coverage improvements
-
-### Feature Requests
-
-Before starting work on a major feature:
-1. Check if an issue exists
-2. Create an issue to discuss the feature
-3. Wait for maintainer feedback
-4. Proceed with implementation once approved
-
-## Platform-Specific Testing
-
-### Windows
-
-```powershell
-searchat-web
-# Test WSL path detection
-# Test UNC paths (\\wsl$\...)
-```
-
-### WSL
-
-```bash
-cd /mnt/d/projects/searchat
-searchat-web
-# Test Windows mount points (/mnt/c/...)
-# Test path translation
-```
-
-### Linux/macOS
-
-```bash
-searchat-web
-# Test standard Unix paths
-# Test auto-detection
-```
-
-## Security
-
-### Reporting Security Issues
-
-Do NOT create public issues for security vulnerabilities. Instead:
-- Open a GitHub issue with "Security" label
-- Include detailed description and steps to reproduce
-- Allow time for fix before public disclosure
-
-### Security Considerations
-
-- Never commit API keys or credentials
-- Parquet files contain conversation data - exclude from git
-- Test input validation and sanitization
-- Consider privacy implications of search features
-
-## Documentation
-
-### Types of Documentation
-
-1. **Code comments** - Explain complex logic
-2. **Docstrings** - Describe function/class behavior
-3. **README.md** - Quick start and overview
-4. **This file** - Contribution guidelines
-5. **Examples** - Working code samples
-
-### Documentation Standards
-
-- Use clear, simple language
-- Include code examples
-- Explain why, not just what
-- Keep documentation up to date with code changes
-
-## Questions?
-
-- Open a discussion on GitHub
-- Check existing issues and pull requests
-- Review the examples directory
-- Read the architecture documentation
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the MIT License.
-
-## Code of Conduct
-
-- Be respectful and professional
-- Welcome newcomers
-- Focus on constructive feedback
-- Assume good intentions
-- Help create an inclusive community

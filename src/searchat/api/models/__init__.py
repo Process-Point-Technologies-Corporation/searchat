@@ -7,6 +7,9 @@ from searchat.api.models.requests import (
 )
 from searchat.api.models.responses import (
     SearchResultResponse,
+    UnifiedSearchResultResponse,
+    RoomResponse,
+    FileTouchedResponse,
     ConversationMessage,
     ConversationResponse,
     BackupMetadataResponse,
@@ -23,6 +26,9 @@ __all__ = [
     "BackupRestoreRequest",
     # Responses
     "SearchResultResponse",
+    "UnifiedSearchResultResponse",
+    "RoomResponse",
+    "FileTouchedResponse",
     "ConversationMessage",
     "ConversationResponse",
     "BackupMetadataResponse",

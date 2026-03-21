@@ -7,25 +7,29 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Query, HTTPException
-from fastapi.responses import HTMLResponse
 
+from searchat.agents import detect_provider, detect_provider_id
 from searchat.api.models import (
     SearchResultResponse,
-    ConversationMessage,
     ConversationResponse,
     ResumeRequest,
 )
-from searchat.api.dependencies import get_search_engine, get_platform_manager
+from searchat.api.dependencies import get_unified_search_engine, get_platform_manager
+from searchat.api.routers.search import _detect_source
+
+
+def _detect_tool_from_path(file_path: str) -> str:
+    """Detect agent tool from file path using string matching (no disk I/O)."""
+    normalized = file_path.replace("\\", "/").lower()
+    if "/.codex/" in normalized:
+        return "codex"
+    if "/.vibe/" in normalized:
+        return "vibe"
+    return "claude"
 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-async def read_file_async(file_path: str, encoding: str = 'utf-8') -> str:
-    """Read file asynchronously to avoid blocking event loop."""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, lambda: Path(file_path).read_text(encoding=encoding))
 
 
 @router.get("/conversations/all")
@@ -34,78 +38,98 @@ async def get_all_conversations(
     project: Optional[str] = Query(None, description="Filter by project"),
     date: Optional[str] = Query(None, description="Date filter: today, week, month, or custom"),
     date_from: Optional[str] = Query(None, description="Custom date from (YYYY-MM-DD)"),
-    date_to: Optional[str] = Query(None, description="Custom date to (YYYY-MM-DD)")
+    date_to: Optional[str] = Query(None, description="Custom date to (YYYY-MM-DD)"),
+    limit: int = Query(50, description="Max results per page", ge=1, le=200),
+    offset: int = Query(0, description="Offset for pagination", ge=0),
 ):
-    """Get all conversations with sorting and filtering."""
+    """Get conversations with sorting, filtering, and pagination."""
     try:
-        search_engine = get_search_engine()
-        df = search_engine.conversations_df.copy()
+        unified_engine = get_unified_search_engine()
+        if unified_engine is None:
+            raise HTTPException(status_code=503, detail="Unified search engine not available")
 
-        # Filter out conversations with 0 messages
-        df = df[df['message_count'] > 0]
+        # Build WHERE clause
+        conditions = ["message_count > 0"]
+        params: list = []
 
-        # Filter by project if specified
         if project:
-            df = df[df['project_id'] == project]
+            conditions.append("project_id = ?")
+            params.append(project)
 
-        # Handle date filtering
         if date == "custom" and (date_from or date_to):
-            # Custom date range
             if date_from:
-                date_from_dt = datetime.fromisoformat(date_from)
-                df = df[df['updated_at'] >= date_from_dt]
+                conditions.append("updated_at >= ?")
+                params.append(datetime.fromisoformat(date_from))
             if date_to:
-                # Add 1 day to include the entire end date
-                date_to_dt = datetime.fromisoformat(date_to) + timedelta(days=1)
-                df = df[df['updated_at'] < date_to_dt]
+                conditions.append("updated_at < ?")
+                params.append(datetime.fromisoformat(date_to) + timedelta(days=1))
         elif date:
-            # Preset date ranges
             now = datetime.now()
             if date == "today":
-                date_from_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
-                df = df[df['updated_at'] >= date_from_dt]
+                conditions.append("updated_at >= ?")
+                params.append(now.replace(hour=0, minute=0, second=0, microsecond=0))
             elif date == "week":
-                date_from_dt = now - timedelta(days=7)
-                df = df[df['updated_at'] >= date_from_dt]
+                conditions.append("updated_at >= ?")
+                params.append(now - timedelta(days=7))
             elif date == "month":
-                date_from_dt = now - timedelta(days=30)
-                df = df[df['updated_at'] >= date_from_dt]
+                conditions.append("updated_at >= ?")
+                params.append(now - timedelta(days=30))
 
-        # Sort based on parameter
-        if sort_by == "length":
-            df = df.sort_values('message_count', ascending=False)
-        elif sort_by == "date_newest":
-            df = df.sort_values('updated_at', ascending=False)
-        elif sort_by == "date_oldest":
-            df = df.sort_values('updated_at', ascending=True)
-        elif sort_by == "title":
-            df = df.sort_values('title', ascending=True)
+        sort_map = {
+            "length": "message_count DESC",
+            "date_newest": "updated_at DESC",
+            "date_oldest": "updated_at ASC",
+            "title": "title ASC",
+        }
+        order_by = sort_map.get(sort_by, "message_count DESC")
+        where_clause = " AND ".join(conditions)
 
-        # Convert to response format (vectorized)
+        count_sql = f"SELECT COUNT(*) FROM conversations WHERE {where_clause}"
+        data_sql = f"""
+            SELECT conversation_id, project_id, title, created_at, updated_at,
+                   message_count, file_path
+            FROM conversations
+            WHERE {where_clause}
+            ORDER BY {order_by}
+            LIMIT ? OFFSET ?
+        """
+
+        # Direct execution — query takes ~3ms, no need for thread pool
+        # (run_in_executor gets blocked by GIL-holding embedding threads)
+        cursor = unified_engine.storage._get_read_cursor()
+        total_count = cursor.execute(count_sql, params).fetchone()[0]
+        rows = cursor.execute(data_sql, params + [limit, offset]).fetchall()
+
         response_results = [
             SearchResultResponse(
-                conversation_id=row['conversation_id'],
-                project_id=row['project_id'],
-                title=row['title'],
-                created_at=row['created_at'].isoformat(),
-                updated_at=row['updated_at'].isoformat(),
-                message_count=row['message_count'],
-                file_path=row['file_path'],
-                snippet=row['full_text'][:200] + ("..." if len(row['full_text']) > 200 else ""),
-                score=0.0,  # No relevance score for "all" view
+                conversation_id=r[0],
+                project_id=r[1],
+                title=r[2],
+                created_at=r[3].isoformat() if isinstance(r[3], datetime) else str(r[3]) if r[3] else "",
+                updated_at=r[4].isoformat() if isinstance(r[4], datetime) else str(r[4]) if r[4] else "",
+                message_count=r[5],
+                file_path=r[6],
+                snippet="",
+                score=0.0,
                 message_start_index=None,
                 message_end_index=None,
-                source="WSL" if "/home/" in row['file_path'] or "wsl" in row['file_path'].lower() else "WIN"
+                source=_detect_source(r[6]),
+                tool=_detect_tool_from_path(r[6]),
             )
-            for row in df.to_dict('records')
+            for r in rows
         ]
 
         return {
             "results": response_results,
-            "total": len(response_results),
-            "search_time_ms": 0
+            "total": total_count,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + limit < total_count,
+            "search_time_ms": 0,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -114,14 +138,13 @@ async def get_all_conversations(
 async def get_conversation(conversation_id: str) -> ConversationResponse:
     """Get a specific conversation with all messages."""
     try:
-        search_engine = get_search_engine()
+        unified_engine = get_unified_search_engine()
+        if unified_engine is None:
+            raise HTTPException(status_code=503, detail="Unified search engine not available")
 
-        # Find conversation in dataframe (O(1) index lookup)
-        conv_df = search_engine.conversations_df
-        try:
-            conv = conv_df.loc[conversation_id]
-        except KeyError:
-            logger.warning(f"Conversation not found in index: {conversation_id}")
+        # Query from DuckDB
+        conv = unified_engine.storage.get_conversation(conversation_id)
+        if not conv:
             raise HTTPException(status_code=404, detail="Conversation not found in index")
         file_path = conv['file_path']
 
@@ -133,15 +156,26 @@ async def get_conversation(conversation_id: str) -> ConversationResponse:
                 detail=f"Conversation file not found. The file may have been moved or deleted: {file_path}"
             )
 
-        # Load messages from JSONL file (async to avoid blocking)
+        provider = detect_provider(Path(file_path))
+        if provider is None:
+            raise HTTPException(status_code=400, detail=f"Unknown conversation format: {file_path}")
+
+        # Load messages from transcript file
         try:
-            content = await read_file_async(file_path)
-            lines = [json.loads(line) for line in content.splitlines() if line.strip()]
+            messages = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: provider.load_messages(Path(file_path))
+            )
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in conversation file {file_path}: {e}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to parse conversation file (invalid JSON)"
+            )
+        except ValueError as e:
+            logger.error(f"Malformed transcript in conversation file {file_path}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to parse conversation file ({e})"
             )
         except UnicodeDecodeError as e:
             logger.error(f"Encoding error reading {file_path}: {e}")
@@ -150,28 +184,6 @@ async def get_conversation(conversation_id: str) -> ConversationResponse:
                 detail="Failed to read conversation file (encoding error)"
             )
 
-        messages = []
-        for entry in lines:
-            if entry.get('type') in ('user', 'assistant'):
-                raw_content = entry.get('message', {}).get('content', '')
-                if isinstance(raw_content, str):
-                    content = raw_content
-                elif isinstance(raw_content, list):
-                    content = '\n\n'.join(
-                        block.get('text', '')
-                        for block in raw_content
-                        if block.get('type') == 'text'
-                    )
-                else:
-                    content = ''
-
-                if content:
-                    messages.append(ConversationMessage(
-                        role=entry.get('type'),
-                        content=content,
-                        timestamp=entry.get('timestamp', '')
-                    ))
-
         logger.info(f"Successfully loaded conversation {conversation_id} with {len(messages)} messages")
 
         return ConversationResponse(
@@ -179,6 +191,7 @@ async def get_conversation(conversation_id: str) -> ConversationResponse:
             title=conv['title'],
             project_id=conv['project_id'],
             file_path=conv['file_path'],
+            tool=provider.agent_id,
             message_count=len(messages),
             messages=messages
         )
@@ -194,14 +207,15 @@ async def get_conversation(conversation_id: str) -> ConversationResponse:
 async def resume_session(request: ResumeRequest):
     """Resume a conversation session in its original tool (Claude Code or Vibe)."""
     try:
-        search_engine = get_search_engine()
+        unified_engine = get_unified_search_engine()
         platform_manager = get_platform_manager()
 
-        # Find conversation in dataframe (O(1) index lookup)
-        conv_df = search_engine.conversations_df
-        try:
-            conv = conv_df.loc[request.conversation_id]
-        except KeyError:
+        if unified_engine is None:
+            raise HTTPException(status_code=503, detail="Unified search engine not available")
+
+        # Find conversation in DuckDB
+        conv = unified_engine.storage.get_conversation(request.conversation_id)
+        if conv is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         file_path = conv['file_path']
         session_id = conv['conversation_id']
@@ -209,26 +223,14 @@ async def resume_session(request: ResumeRequest):
         # Extract working directory from conversation file
         cwd = None
 
-        if file_path.endswith('.jsonl'):
-            # Claude Code - read lines until we find one with cwd (async)
-            tool = 'claude'
-            content = await read_file_async(file_path)
-            for line in content.splitlines():
-                if line.strip():
-                    entry = json.loads(line)
-                    if 'cwd' in entry:
-                        cwd = entry['cwd']
-                        break
-            command = f'claude --resume {session_id}'
-        elif file_path.endswith('.json'):
-            # Vibe - read JSON metadata (async)
-            tool = 'vibe'
-            content = await read_file_async(file_path)
-            data = json.loads(content)
-            cwd = data.get('metadata', {}).get('environment', {}).get('working_directory', None)
-            command = f'vibe --resume {session_id}'
-        else:
+        provider = detect_provider(Path(file_path))
+        if provider is None:
             raise HTTPException(status_code=400, detail=f"Unknown conversation format: {file_path}")
+        tool = provider.agent_id
+        cwd = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: provider.extract_cwd(Path(file_path))
+        )
+        command = provider.build_resume_command(session_id)
 
         # Normalize path for current platform
         if cwd:
@@ -254,9 +256,9 @@ async def resume_session(request: ResumeRequest):
     except HTTPException:
         raise
     except FileNotFoundError as e:
-        # Command not found (claude or vibe not installed)
+        # Command not found (claude, codex, or vibe not installed)
         logger.error(f"Command not found: {e}")
-        tool_name = locals().get('tool', 'claude/vibe')
+        tool_name = locals().get('tool', 'claude/codex/vibe')
         raise HTTPException(
             status_code=500,
             detail=f"Failed to execute command. Make sure {tool_name} is installed and in PATH."

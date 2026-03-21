@@ -5,8 +5,33 @@
 *.parquet
 *.faiss
 
+# Large eval pipeline outputs (regenerable from scripts)
+config/eval_clean/results/search_results.csv
+config/eval_clean/results/search_results_cross.csv
+config/eval_clean/results/graded_results.json
+config/eval_clean/backup_*/results/search/
+config/eval_clean/eval.duckdb
+
+# Local LLM (large model files)
+loc_llm/
+*.gguf
+
 # Archived/deprecated docs
 archived/
+
+# Private repo-only material
+publication/
+publication_v2/
+searchat-arxiv.tar.gz
+*.pdf
+final_check_pages/
+rendered_pages/
+rendered_figures/
+arxiv_verify/
+arxiv_compare/
+analysis/
+analysis_reports/
+private/
 
 # Environment
 .env
@@ -96,3 +121,19 @@ site/
 # Package managers
 Pipfile.lock
 poetry.lock
+
+.pytest_tmp/
+
+.tmp_pytest/
+
+.tmp_pytest_base/
+
+pytest-cache-files-*
+
+coverage.xml
+
+.dist_check/
+
+.benchmarks/
+
+benchmark_*.py

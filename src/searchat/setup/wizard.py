@@ -5,6 +5,7 @@ Run with: python -m searchat.setup
 """
 
 import os
+import re
 import sys
 import shutil
 from pathlib import Path
@@ -17,6 +18,7 @@ from searchat.config.constants import (
     DEFAULT_LOGS_SUBDIR,
     SETTINGS_FILE,
     DEFAULT_SETTINGS_FILE,
+    SETTINGS_TEMPLATE_FILE,
     ENV_FILE,
     CLAUDE_DIR_NAME,
     CLAUDE_PROJECTS_SUBDIR,
@@ -119,10 +121,10 @@ class SetupManager:
         for candidate in candidates:
             if candidate.exists() and candidate.is_dir():
                 found_dirs.append(candidate)
-                print(f"  ✓ Found: {candidate}")
+                print(f"  [+]Found: {candidate}")
 
         if not found_dirs:
-            print("  ✗ No Claude directories found automatically")
+            print("  [X]No Claude directories found automatically")
             print()
             print("Please ensure Claude CLI is installed and has created conversations.")
             print()
@@ -133,9 +135,9 @@ class SetupManager:
                 custom_path_obj = Path(custom_path)
                 if custom_path_obj.exists():
                     found_dirs.append(custom_path_obj)
-                    print(f"  ✓ Using custom path: {custom_path_obj}")
+                    print(f"  [+]Using custom path: {custom_path_obj}")
                 else:
-                    print(f"  ✗ Path not found: {custom_path_obj}")
+                    print(f"  [X]Path not found: {custom_path_obj}")
                     return False
             else:
                 print()
@@ -167,12 +169,12 @@ class SetupManager:
         for directory in directories:
             try:
                 directory.mkdir(parents=True, exist_ok=True)
-                print(f"  ✓ Created: {directory}")
+                print(f"  [+]Created: {directory}")
             except PermissionError:
-                print(f"  ✗ Permission denied: {directory}")
+                print(f"  [X]Permission denied: {directory}")
                 return False
             except Exception as e:
-                print(f"  ✗ Error creating {directory}: {e}")
+                print(f"  [X]Error creating {directory}: {e}")
                 return False
 
         print()
@@ -190,6 +192,7 @@ class SetupManager:
 
         # 1. Copy default settings to user config
         user_config = self.config_dir / SETTINGS_FILE
+        template_config = Path(__file__).parent.parent / "config" / SETTINGS_TEMPLATE_FILE
         default_config = Path(__file__).parent.parent / "config" / DEFAULT_SETTINGS_FILE
 
         if user_config.exists():
@@ -199,17 +202,18 @@ class SetupManager:
                 return True
 
         try:
-            if default_config.exists():
-                shutil.copy(default_config, user_config)
-                print(f"  ✓ Created: {user_config}")
+            source_config = template_config if template_config.exists() else default_config
+            if source_config.exists():
+                shutil.copy(source_config, user_config)
+                print(f"  [+]Created: {user_config}")
 
                 # Update with detected paths
                 self._update_config_paths(user_config)
             else:
-                print(f"  ✗ Default config not found: {default_config}")
+                print(f"  [X]Config template not found: {source_config}")
                 return False
         except Exception as e:
-            print(f"  ✗ Error creating config: {e}")
+            print(f"  [X]Error creating config: {e}")
             return False
 
         # 2. Create .env file if it doesn't exist
@@ -220,7 +224,7 @@ class SetupManager:
             try:
                 if env_example.exists():
                     shutil.copy(env_example, env_file)
-                    print(f"  ✓ Created: {env_file}")
+                    print(f"  [+]Created: {env_file}")
                 else:
                     # Create minimal .env
                     env_file.write_text(
@@ -229,9 +233,9 @@ class SetupManager:
                         f"# SEARCHAT_DATA_DIR={self.data_dir}\n"
                         "# SEARCHAT_PORT=8000\n"
                     )
-                    print(f"  ✓ Created: {env_file}")
+                    print(f"  [+]Created: {env_file}")
             except Exception as e:
-                print(f"  ✗ Error creating .env: {e}")
+                print(f"  [X]Error creating .env: {e}")
                 # Non-fatal, continue
 
         print()
@@ -247,15 +251,19 @@ class SetupManager:
             content = content.replace("{username}", username)
 
             # Update search directory to match data_dir
-            content = content.replace(
-                'search_directory = "C:/Users/{username}/.searchat"',
-                f'search_directory = "{str(self.data_dir).replace(chr(92), "/")}"'
+            search_dir = str(self.data_dir).replace(chr(92), "/")
+            content = re.sub(
+                r'^search_directory = ".*"$',
+                f'search_directory = "{search_dir}"',
+                content,
+                count=1,
+                flags=re.MULTILINE,
             )
 
             config_path.write_text(content)
-            print(f"  ✓ Updated config with your username: {username}")
+            print(f"  [+]Updated config with your username: {username}")
         except Exception as e:
-            print(f"  ⚠ Warning: Could not update config paths: {e}")
+            print(f"  [!]Warning: Could not update config paths: {e}")
 
     def _show_completion_message(self):
         """Display setup completion message and next steps."""

@@ -2,16 +2,6 @@
   <img src="assets/logo.svg" alt="searchat" width="400">
 </p>
 
-> [!NOTE]
-> **Next version in progress.** Searchat v2 is under active development. The current release remains functional but the upcoming version includes significant changes. Watch this repo or check back for the release.
-
-<p align="center">
-
-[![Built with Claude Code](https://img.shields.io/badge/Built_with-Claude_Code-D97757?logo=claude&logoColor=fff)](https://claude.ai/code)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
-</p>
-
 <p align="center">Semantic search for AI coding agent conversations. Find past solutions by meaning, not just keywords.</p>
 
 ## Supported Agents
@@ -19,11 +9,12 @@
 | Agent | Location | Format |
 |-------|----------|--------|
 | Claude Code | `~/.claude/projects/**/*.jsonl` | JSONL |
+| Codex | `~/.codex/sessions/**/*.jsonl` | JSONL |
 | Mistral Vibe | `~/.vibe/logs/session/*.json` | JSON |
 
 ## Features
 
-- **Hybrid Search** — BM25 keyword + FAISS semantic vectors
+- **Cross-Layer Search** - Verbatim + distilled retrieval with unified ranking
 - **Multi-Agent** — Search across Claude Code and Mistral Vibe sessions
 - **Live Indexing** — Auto-indexes new/modified files (5min debounce for in-progress)
 - **Append-Only** — Never deletes existing data, safe for long-term use
@@ -37,18 +28,18 @@
 ```bash
 git clone https://github.com/Process-Point-Technologies-Corporation/searchat.git
 cd searchat
-pip install -e .
+pip install .
 
-# First-time setup: build search index
-python scripts/setup-index
+# First-time setup: create local config
+python -m searchat.setup
 
-# Start web server
+# Start web server (startup catch-up indexing runs automatically)
 searchat-web
 ```
 
 Open http://localhost:8000
 
-The setup script indexes all conversations from Claude Code and Mistral Vibe. On subsequent runs, the web server automatically indexes new conversations via live file watching.
+The setup wizard creates local configuration. On startup, the web server performs catch-up indexing for discovered transcripts and then keeps up with new conversations via live file watching.
 
 ## Enable Claude Self-Search
 
@@ -74,7 +65,7 @@ curl -s "http://localhost:8000/api/conversation/CONVERSATION_ID" | jq '.messages
 - Looking for previous solutions to similar problems
 - Checking how something was implemented in past sessions
 
-**Start server:** `searchat-web` from the searchat directory
+**Start server:** `searchat-web`
 ```
 
 See `CLAUDE.example.md` for the full template.
@@ -88,7 +79,7 @@ searchat-web
 ```
 
 Features:
-- Search modes: hybrid/semantic/keyword
+- Search modes: cross-layer/verbatim/distill
 - Filter by project, date range
 - View full conversations
 - Add missing conversations button (safe append)
@@ -106,7 +97,7 @@ searchat  # interactive mode
 
 ```bash
 # Search
-curl "http://localhost:8000/api/search?q=authentication&mode=hybrid&limit=10"
+curl "http://localhost:8000/api/search?q=authentication&mode=cross-layer&limit=10"
 
 # Get conversation
 curl "http://localhost:8000/api/conversation/{conversation_id}"
@@ -132,114 +123,149 @@ curl -X POST "http://localhost:8000/api/shutdown?force=true"
 
 ### Utilities
 
+Installed commands:
+
 ```bash
-# Add missing conversations to index
+# Initial setup (interactive configuration wizard)
+python -m searchat.setup
+
+# Web server
+searchat-web
+
+# Hardware profile detection
+searchat-hardware --show
+```
+
+Repo-only helper scripts:
+
+```bash
+# Add missing conversations to index from a repo checkout
 python scripts/index-missing
 
-# Initial setup (interactive, safe options)
-python scripts/setup-index
-
-# Convert Vibe plaintext history to searchable sessions
+# Convert Vibe plaintext history to searchable sessions from a repo checkout
 python utils/vibe_converter.py
 ```
 
 ### As Library
 
 ```python
-from searchat.search_engine import SearchEngine
+from pathlib import Path
+
+from searchat import UnifiedSearchEngine
 from searchat.config import Config
+from searchat.models import AlgorithmType
 
 config = Config.load()
-engine = SearchEngine(config.paths.search_directory, config)
+engine = UnifiedSearchEngine(Path(config.paths.search_directory), config)
 
-results = engine.search("python async", mode="hybrid")
-for r in results.results[:5]:
+results = engine.search("python async", algorithm=AlgorithmType.CROSS_LAYER, limit=5)
+for r in results.results:
     print(f"{r.title}: {r.score:.3f}")
 ```
 
 ## Architecture
 
 **Code Organization:**
-- `src/searchat/api/` - FastAPI app with 6 modular routers (15 endpoints)
-- `src/searchat/core/` - Business logic (indexer, search_engine, watcher)
+- `src/searchat/api/` - FastAPI app with modular routers
+- `src/searchat/core/` - Business logic (indexer, unified_search, watcher)
 - `src/searchat/web/` - Modular frontend (HTML + CSS modules + ES6 JS)
-- `tests/api/` - Comprehensive API tests (62 tests)
+- `tests/api/` - API and watcher behavior tests
 
 **Data Flow:**
 ```
-~/.claude/projects/**/*.jsonl     (source conversations)
-        │
-        ▼ index_append_only()
-        │
 ~/.searchat/data/
-├── conversations/*.parquet       (conversation data, DuckDB queryable)
-└── indices/
-    ├── embeddings.faiss          (semantic vectors)
-    ├── embeddings.metadata.parquet
-    └── index_metadata.json
+├── searchat.duckdb               (conversations, messages, exchanges, embeddings)
+├── palace.duckdb                 (distilled objects and rooms)
+└── watcher_file_cache.json       (startup bootstrap cache)
 ```
 
 **Search Flow:**
-1. Query → BM25 keyword search + FAISS semantic search
-2. Results merged via Reciprocal Rank Fusion
-3. Hybrid ranking returns best of both approaches
+1. Query → DuckDB keyword search + semantic vector search
+2. Results merged in the unified engine
+3. Cross-layer ranking returns the best combined results
 
 **Live Watching:**
 - `watchdog` monitors conversation directories
 - New files → indexed immediately
 - Modified files → re-indexed after 5min debounce (configurable)
-- `index_append_only()` adds to existing index
-- Never deletes existing data
+- Changed Claude/Codex JSONL files use append-only tail reindex when possible
+- Never deletes source conversations; index updates remain append-safe
 
 **Documentation:**
 - `docs/architecture.md` - System design and components
-- `docs/api-reference.md` - Complete API endpoint documentation
+- `docs/api-reference.md` - Public API and search endpoint reference
 - `docs/terminal-launching.md` - Platform-specific terminal launching
 
 ## Configuration
 
-Create `~/.searchat/config/settings.toml`:
+Searchat uses these config layers:
+- `config/settings.default.toml` - full internal defaults
+- `config/settings.template.toml` - simple user-facing starter config
+- `~/.searchat/config/settings.toml` - your actual local settings
+
+For most people, this is enough:
 
 ```toml
 [paths]
 search_directory = "~/.searchat"
 claude_directory_windows = "~/.claude/projects"
-claude_directory_wsl = "//wsl$/Ubuntu/home/{username}/.claude/projects"
+claude_directory_wsl = ""
 
 [indexing]
-batch_size = 1000
-auto_index = true
-reindex_on_modification = true  # Re-index modified conversations
-modification_debounce_minutes = 5  # Wait time before re-indexing
+reindex_on_modification = true
+modification_debounce_minutes = 5
 
 [search]
-default_mode = "hybrid"
+default_mode = "cross-layer"
 max_results = 100
-snippet_length = 200
 
 [embedding]
-model = "all-MiniLM-L6-v2"
+device = "auto"
 batch_size = 32
 
 [performance]
-memory_limit_mb = 3000
-query_cache_size = 100
+startup_warmup_mode = "keyword"
+
+[distillation]
+provider = "claude"
+cli_model = "claude-haiku-4-5-20251001"
 ```
 
-Or use environment variables:
+Notes:
+- Leave `claude_directory_wsl = ""` unless you actually use WSL transcripts.
+- `startup_warmup_mode = "keyword"` is the best default for modest hardware.
+- `device = "auto"` will use GPU if available, otherwise CPU.
+- Distillation can use either subscription-backed CLI family:
+  - `provider = "claude"` uses `claude --print`
+  - `provider = "openai"` uses `codex exec`
+- Good model picks:
+  - Claude fast default: `claude-haiku-4-5-20251001`
+  - OpenAI recommended default: `gpt-5.3-codex`
+  - OpenAI fallback: `gpt-5`
+  - OpenAI cheaper/faster fallback: `gpt-5.1-codex-mini`
+- Advanced tuning still exists, but most users should not need to edit the full defaults surface.
+
+The setup wizard writes this simple template automatically:
+
+```bash
+python -m searchat.setup
+```
+
+Environment variables still override config when needed:
 
 ```bash
 export SEARCHAT_DATA_DIR=~/.searchat
 export SEARCHAT_PORT=8000
-export SEARCHAT_EMBEDDING_MODEL=all-MiniLM-L6-v2
+export SEARCHAT_EMBEDDING_DEVICE=cpu
 export SEARCHAT_REINDEX_ON_MODIFICATION=true
 export SEARCHAT_MODIFICATION_DEBOUNCE_MINUTES=5
+export SEARCHAT_STARTUP_WARMUP_MODE=none
 ```
 
 ## Requirements
 
 - Python 3.9+
-- ~2-3GB RAM (embeddings model + FAISS index)
+- ~2-3GB RAM for comfortable semantic search/distillation
 - ~10MB disk per 1K conversations
 
 ### Dependencies
@@ -247,22 +273,14 @@ export SEARCHAT_MODIFICATION_DEBOUNCE_MINUTES=5
 | Package | Purpose |
 |---------|---------|
 | sentence-transformers | Embeddings (all-MiniLM-L6-v2) |
-| faiss-cpu | Vector similarity search |
-| pyarrow | Parquet storage |
-| duckdb | SQL queries on parquet |
+| duckdb | Unified storage + SQL + FTS/VSS |
 | fastapi + uvicorn | Web API |
 | watchdog | File system monitoring |
 | rich | CLI formatting |
 
 ## Safety
 
-**Append-only indexing:** Never deletes existing data.
-
-```python
-indexer.index_append_only(file_paths)  # Safe: only adds new data
-indexer.index_all()                     # Blocked if index exists
-indexer.index_all(force=True)           # Explicit override required
-```
+**Append-safe indexing:** Searchat never deletes your source transcripts. New files are indexed directly, and changed Claude/Codex transcripts use append-only tail reindex when possible.
 
 **Safe shutdown:** Detects ongoing indexing operations.
 
@@ -276,14 +294,14 @@ curl -X POST "http://localhost:8000/api/shutdown?force=true"
 
 Protects against:
 - Data loss from deleted/moved source files
-- Corrupted Parquet/FAISS files during indexing
+- Corrupted search index files during indexing
 - Inconsistent metadata from interrupted operations
 
 ## Performance
 
 | Metric | Value |
 |--------|-------|
-| Search latency | <100ms (hybrid), <50ms (semantic), <30ms (keyword) |
+| Search latency | <100ms (cross-layer), <50ms (distill), <30ms (verbatim) |
 | Filtered queries | <20ms (DuckDB predicate pushdown) |
 | Index build | ~60s per 100K conversations |
 | Embedding | Batched (CPU: 0.1s/conv, GPU: 0.008s/conv) |
@@ -303,7 +321,7 @@ ls ~/.claude/projects/  # Verify conversations exist
 ```
 
 **WSL not tracked:**
-Configure `claude_directory_wsl` in `~/.searchat/config/settings.toml`:
+Set `claude_directory_wsl` in `~/.searchat/config/settings.toml`:
 ```toml
 claude_directory_wsl = "//wsl.localhost/Ubuntu/home/username/.claude/projects"
 ```
@@ -318,7 +336,7 @@ Run from Windows Python or move repo to WSL filesystem (`~/projects/`).
 
 **Import errors:**
 ```bash
-pip install -e . --force-reinstall
+pip install . --force-reinstall
 ```
 
 **Empty environment variables override config:**
@@ -327,3 +345,9 @@ Remove empty values from `~/.searchat/config/.env` or set proper values.
 ## License
 
 MIT
+
+
+
+
+
+

@@ -27,9 +27,9 @@
             <div class="tip">
                 <div class="tip-title">Search Modes</div>
                 <div class="tip-content">
-                    <strong>Hybrid</strong> - Best results (keyword + semantic)<br>
-                    <strong>Semantic</strong> - Find by meaning/concept<br>
-                    <strong>Keyword</strong> - Exact text matching
+                    <strong>Cross-Layer</strong> - BM25 + semantic fusion (default)<br>
+                    <strong>Verbatim</strong> - BM25 keyword on full text<br>
+                    <strong>Distill</strong> - Semantic on compressed summaries
                 </div>
             </div>
 
@@ -90,16 +90,23 @@
                 <button onclick="setTheme('dark')" data-theme="dark">Dark</button>
             </div>
 
-            <h1 style="margin-bottom: 4px;"><span style="color: #4a9eff">sear</span><span style="background: linear-gradient(to right, #4a9eff, #ff9500); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">ch</span><span style="color: #ff9500">at</span></h1>
-            <p style="margin: 0 0 20px 0; font-size: 13px; color: #888;">Semantic search for AI coding agent conversations — Claude Code + Mistral Vibe</p>
+            <!-- Indexing status banner (hidden by default, shown via JS polling) -->
+            <div id="indexing-banner" style="display: none; background: var(--accent-primary, #3B82F6); color: white; padding: 10px 16px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; align-items: center; gap: 10px;">
+                <span class="indexing-spinner" style="display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0;"></span>
+                <span id="indexing-banner-text">Indexing in progress...</span>
+            </div>
+            <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+
+            <h1 style="margin-bottom: 4px;"><span style="color: #3B82F6">sear</span><span style="background: linear-gradient(to right, #3B82F6, #EA580C); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">ch</span><span style="color: #EA580C">at</span></h1>
+            <p style="margin: 0 0 20px 0; font-size: 13px; color: #888;">Semantic search for AI coding agent conversations</p>
             <input type="text" id="search" class="search-box" placeholder="Search conversations..." />
 
             <div class="filters">
-        <label>Mode: 
+        <label>Mode:
             <select id="mode">
-                <option value="hybrid">Hybrid</option>
-                <option value="semantic">Semantic</option>
-                <option value="keyword">Keyword</option>
+                <option value="cross-layer" selected>Cross-Layer</option>
+                <option value="verbatim">Verbatim</option>
+                <option value="distill">Distill</option>
             </select>
         </label>
         
@@ -187,7 +194,7 @@
             <div class="tip">
                 <div class="tip-title">API Parameters</div>
                 <div class="tip-content">
-                    <code>mode</code> - hybrid/semantic/keyword<br>
+                    <code>mode</code> - cross-layer/verbatim/distill<br>
                     <code>limit</code> - max results (1-100)<br>
                     <code>project</code> - filter by project name
                 </div>
@@ -196,6 +203,6 @@
     </div>
 
     <!-- JavaScript ES6 Module -->
-    <script type="module" src="/static/js/main.js"></script>
+    <script type="module" src="/static/js/main.js?v=4"></script>
 </body>
 </html>

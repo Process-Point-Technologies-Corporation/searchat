@@ -61,12 +61,29 @@ from .constants import (
     ENV_DATA_DIR,
     ENV_WINDOWS_PROJECTS,
     ENV_WSL_PROJECTS,
+    ENV_AUTO_DETECT,
+    ENV_EXCLUDED_CONVERSATIONS_DIR,
+    ENV_INDEX_BATCH_SIZE,
+    ENV_AUTO_INDEX,
+    ENV_INDEX_INTERVAL,
+    ENV_MAX_WORKERS,
+    ENV_REINDEX_ON_MODIFICATION,
+    ENV_MODIFICATION_DEBOUNCE_MINUTES,
+    ENV_DEFAULT_MODE,
+    ENV_MAX_RESULTS,
+    ENV_SNIPPET_LENGTH,
     ENV_MEMORY_LIMIT,
     ENV_EMBEDDING_MODEL,
     ENV_EMBEDDING_BATCH,
+    ENV_CACHE_EMBEDDINGS,
+    ENV_EMBEDDING_DEVICE,
     ENV_CACHE_SIZE,
     ENV_PROFILING,
     ENV_STARTUP_WARMUP_MODE,
+    ENV_THEME,
+    ENV_FONT_FAMILY,
+    ENV_FONT_SIZE,
+    ENV_HIGHLIGHT_COLOR,
     ENV_INTERSECTION_BOOST,
     ENV_PALACE_WEIGHT,
     ENV_VERBATIM_WEIGHT,
@@ -87,6 +104,7 @@ from .constants import (
     DEFAULT_DISTILLATION_MAX_PLY_LENGTH,
     DEFAULT_DISTILLATION_MIN_EXCHANGE_CHARS,
     DEFAULT_DISTILLATION_PROMPT,
+    DEFAULT_PERTURN_PROMPT,
     ENV_DISTILLATION_PROVIDER,
     ENV_DISTILLATION_CLI_MODEL,
     ENV_DISTILLATION_BATCH_SIZE,
@@ -203,11 +221,11 @@ class PathsConfig:
                 data.get("search_directory", str(DEFAULT_DATA_DIR))
             ),
             auto_detect_environment=_get_env_bool(
-                "SEARCHAT_AUTO_DETECT",
+                ENV_AUTO_DETECT,
                 data.get("auto_detect_environment", True)
             ),
             excluded_conversations_dir=_get_env_str(
-                "SEARCHAT_EXCLUDED_CONVERSATIONS_DIR",
+                ENV_EXCLUDED_CONVERSATIONS_DIR,
                 data.get("excluded_conversations_dir", DEFAULT_EXCLUDED_CONVERSATIONS_DIR)
             ),
         )
@@ -245,27 +263,27 @@ class IndexingConfig:
 
         return cls(
             batch_size=_get_env_int(
-                "SEARCHAT_INDEX_BATCH_SIZE",
+                ENV_INDEX_BATCH_SIZE,
                 data.get("batch_size", DEFAULT_INDEX_BATCH_SIZE)
             ),
             auto_index=_get_env_bool(
-                "SEARCHAT_AUTO_INDEX",
+                ENV_AUTO_INDEX,
                 data.get("auto_index", DEFAULT_AUTO_INDEX)
             ),
             index_interval_minutes=_get_env_int(
-                "SEARCHAT_INDEX_INTERVAL",
+                ENV_INDEX_INTERVAL,
                 data.get("index_interval_minutes", DEFAULT_INDEX_INTERVAL_MINUTES)
             ),
             max_workers=_get_env_int(
-                "SEARCHAT_MAX_WORKERS",
+                ENV_MAX_WORKERS,
                 workers_default
             ),
             reindex_on_modification=_get_env_bool(
-                "SEARCHAT_REINDEX_ON_MODIFICATION",
+                ENV_REINDEX_ON_MODIFICATION,
                 data.get("reindex_on_modification", DEFAULT_REINDEX_ON_MODIFICATION)
             ),
             modification_debounce_minutes=_get_env_int(
-                "SEARCHAT_MODIFICATION_DEBOUNCE_MINUTES",
+                ENV_MODIFICATION_DEBOUNCE_MINUTES,
                 data.get("modification_debounce_minutes", DEFAULT_MODIFICATION_DEBOUNCE_MINUTES)
             ),
             excluded_prompt_prefixes=tuple(
@@ -369,15 +387,15 @@ class SearchConfig:
         """Create SearchConfig from dict with environment variable overrides."""
         return cls(
             default_mode=_get_env_str(
-                "SEARCHAT_DEFAULT_MODE",
+                ENV_DEFAULT_MODE,
                 data.get("default_mode", DEFAULT_SEARCH_MODE)
             ),
             max_results=_get_env_int(
-                "SEARCHAT_MAX_RESULTS",
+                ENV_MAX_RESULTS,
                 data.get("max_results", DEFAULT_MAX_RESULTS)
             ),
             snippet_length=_get_env_int(
-                "SEARCHAT_SNIPPET_LENGTH",
+                ENV_SNIPPET_LENGTH,
                 data.get("snippet_length", DEFAULT_SNIPPET_LENGTH)
             ),
             ranking=RankingConfig.from_dict(data.get("ranking", {})),
@@ -436,11 +454,11 @@ class EmbeddingConfig:
                 batch_default
             ),
             cache_embeddings=_get_env_bool(
-                "SEARCHAT_CACHE_EMBEDDINGS",
+                ENV_CACHE_EMBEDDINGS,
                 data.get("cache_embeddings", True)
             ),
             device=_get_env_str(
-                "SEARCHAT_EMBEDDING_DEVICE",
+                ENV_EMBEDDING_DEVICE,
                 device_default
             ),
         )
@@ -482,19 +500,19 @@ class UIConfig:
         """Create UIConfig from dict with environment variable overrides."""
         return cls(
             theme=_get_env_str(
-                "SEARCHAT_THEME",
+                ENV_THEME,
                 data.get("theme", DEFAULT_THEME)
             ),
             font_family=_get_env_str(
-                "SEARCHAT_FONT_FAMILY",
+                ENV_FONT_FAMILY,
                 data.get("font_family", DEFAULT_FONT_FAMILY)
             ),
             font_size=_get_env_int(
-                "SEARCHAT_FONT_SIZE",
+                ENV_FONT_SIZE,
                 data.get("font_size", DEFAULT_FONT_SIZE)
             ),
             highlight_color=_get_env_str(
-                "SEARCHAT_HIGHLIGHT_COLOR",
+                ENV_HIGHLIGHT_COLOR,
                 data.get("highlight_color", DEFAULT_HIGHLIGHT_COLOR)
             ),
         )
@@ -574,7 +592,7 @@ class DistillationConfig:
                 data.get("min_exchange_chars", DEFAULT_DISTILLATION_MIN_EXCHANGE_CHARS)
             ),
             prompt=data.get("prompt", DEFAULT_DISTILLATION_PROMPT),
-            perturn_prompt=data.get("perturn_prompt", data.get("prompt", DEFAULT_DISTILLATION_PROMPT)),
+            perturn_prompt=data.get("perturn_prompt", DEFAULT_PERTURN_PROMPT),
         )
 
 

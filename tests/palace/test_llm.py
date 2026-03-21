@@ -120,7 +120,7 @@ class TestCliInvocationErrors:
         )
 
         with patch("searchat.palace.llm.shutil.which", return_value="claude"):
-            with patch.object(CLIDistillationLLM, "_get_session_dir", return_value=Path("D:/searchat-fixtures/.missing-claude-sessions")):
+            with patch.object(CLIDistillationLLM, "_get_session_dir", return_value=Path("D:/projects/searchat/.missing-claude-sessions")):
                 with patch("searchat.palace.llm.subprocess.run", return_value=completed):
                     with pytest.raises(RuntimeError, match="OAuth token expired"):
                         llm._invoke_cli("prompt")
@@ -136,7 +136,7 @@ class TestCliInvocationErrors:
         )
 
         with patch("searchat.palace.llm.shutil.which", return_value="claude"):
-            with patch.object(CLIDistillationLLM, "_get_session_dir", return_value=Path("D:/searchat-fixtures/.missing-claude-sessions")):
+            with patch.object(CLIDistillationLLM, "_get_session_dir", return_value=Path("D:/projects/searchat/.missing-claude-sessions")):
                 with patch("searchat.palace.llm.subprocess.run", return_value=completed):
                     with pytest.raises(RuntimeError, match=r"claude --print --model claude-haiku"):
                         llm._invoke_cli("prompt")
@@ -151,7 +151,7 @@ class TestCliInvocationErrors:
         )
 
         with patch("searchat.palace.llm.shutil.which", return_value="claude"):
-            with patch.object(CLIDistillationLLM, "_get_session_dir", return_value=Path("D:/searchat-fixtures/.missing-claude-sessions")):
+            with patch.object(CLIDistillationLLM, "_get_session_dir", return_value=Path("D:/projects/searchat/.missing-claude-sessions")):
                 with patch("searchat.palace.llm.subprocess.run", return_value=completed) as run_mock:
                     llm._invoke_cli("prompt")
 
@@ -171,7 +171,7 @@ class TestCliInvocationErrors:
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
         with patch("searchat.palace.llm.shutil.which", side_effect=lambda name: "codex" if name == "codex" else "pwsh"):
-            with patch.object(CLIDistillationLLM, "_get_session_dir", return_value=Path("D:/searchat-fixtures/.missing-codex-sessions")):
+            with patch.object(CLIDistillationLLM, "_get_session_dir", return_value=Path("D:/projects/searchat/.missing-codex-sessions")):
                 with patch("searchat.palace.llm.subprocess.run", side_effect=_fake_run) as run_mock:
                     raw = llm._invoke_cli("prompt")
 
@@ -187,8 +187,7 @@ class TestCliInvocationErrors:
         completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
 
         with patch("searchat.palace.llm.shutil.which", side_effect=lambda name: "codex" if name == "codex" else "pwsh"):
-            with patch.object(CLIDistillationLLM, "_get_session_dir", return_value=Path("D:/searchat-fixtures/.missing-codex-sessions")):
+            with patch.object(CLIDistillationLLM, "_get_session_dir", return_value=Path("D:/projects/searchat/.missing-codex-sessions")):
                 with patch("searchat.palace.llm.subprocess.run", return_value=completed):
                     with pytest.raises(RuntimeError, match=r"codex exec --model gpt-5"):
                         llm._invoke_cli("prompt")
-

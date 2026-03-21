@@ -1,40 +1,35 @@
-"""
-Basic Search Example
+"""Basic Search Example.
 
-Demonstrates simple search with default configuration.
-Use case: Quick keyword search across all conversations.
+Run a single cross-layer query against an existing Searchat index.
 
 Usage:
     python examples/basic_search.py
 """
 
-from searchat.search_engine import SearchEngine
-from searchat.config import Config
+from searchat import UnifiedSearchEngine
+from searchat.config import Config, PathResolver
+from searchat.models import AlgorithmType
 
 
-def main():
-    """Run a basic search query."""
-    # Load default configuration
+def main() -> None:
     config = Config.load()
+    search_dir = PathResolver.get_shared_search_dir(config)
+    engine = UnifiedSearchEngine(search_dir, config)
 
-    # Initialize search engine
-    engine = SearchEngine(config)
-
-    # Perform a simple search
     query = "refactoring"
-    print(f"Searching for: '{query}'")
-    print("-" * 70)
+    results = engine.search(query, algorithm=AlgorithmType.CROSS_LAYER, limit=5)
 
-    results = engine.search(query, mode="hybrid", max_results=5)
+    print(f"Searching for: {query!r}")
+    print("=" * 70)
+    for idx, result in enumerate(results.results, 1):
+        print(f"{idx}. {result.title}")
+        print(f"   Score: {result.score:.3f}")
+        print(f"   Project: {result.project_id}")
+        print(f"   Path: {result.file_path}")
+        print(f"   Snippet: {result.snippet[:160]}...")
+        print()
 
-    # Display results
-    for i, result in enumerate(results, 1):
-        print(f"\n{i}. {result.conversation_name}")
-        print(f"   Score: {result.score:.2f}")
-        print(f"   File: {result.file_path}")
-        print(f"   Snippet: {result.snippet[:150]}...")
-
-    print(f"\n\nFound {len(results)} results")
+    print(f"Total results: {results.total_count}")
 
 
 if __name__ == "__main__":

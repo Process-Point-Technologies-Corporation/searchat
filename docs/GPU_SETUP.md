@@ -6,7 +6,7 @@ Searchat automatically detects and uses GPU acceleration when available.
 
 **Default installation uses CPU** (works everywhere):
 ```bash
-pip install -e .
+pip install .
 ```
 
 **To enable GPU acceleration**, install PyTorch with CUDA support BEFORE installing Searchat:
@@ -19,7 +19,7 @@ pip uninstall torch torchvision
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 
 # Then install Searchat
-pip install -e .
+pip install .
 ```
 
 That's it! Searchat will automatically detect and use your GPU.
@@ -170,7 +170,7 @@ batch_size = 16  # Default: 32
 If you see a warning that GPU is available but not in use:
 1. Uninstall CPU PyTorch: `pip uninstall torch torchvision`
 2. Reinstall with CUDA: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124`
-3. Restart searchat
+3. Restart Searchat
 
 ---
 
@@ -187,3 +187,4 @@ The default `pip install torch` gives you CPU-only version (works everywhere, sm
 1. **Default**: CPU-only (no setup required)
 2. **GPU**: Install PyTorch with CUDA/MPS before Searchat
 3. **Verification**: Check that `device: cuda/mps` appears in logs
+

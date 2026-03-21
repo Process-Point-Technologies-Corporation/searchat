@@ -10,9 +10,11 @@ from searchat.models import (
     SearchFilters,
 )
 from searchat.core import (
-    SearchEngine,
-    ConversationIndexer,
+    UnifiedIndexer,
+    UnifiedSearchEngine,
+    UnifiedStorage,
 )
+
 
 __all__ = [
     "ConversationRecord",
@@ -21,6 +23,7 @@ __all__ = [
     "SearchResults",
     "SearchMode",
     "SearchFilters",
-    "SearchEngine",
-    "ConversationIndexer",
+    "UnifiedIndexer",
+    "UnifiedSearchEngine",
+    "UnifiedStorage",
 ]

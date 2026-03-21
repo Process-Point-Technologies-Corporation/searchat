@@ -25,6 +25,18 @@ export async function indexMissing() {
         const response = await fetch('/api/index_missing', { method: 'POST' });
         const data = await response.json();
 
+        if (response.status === 409) {
+            resultsDiv.innerHTML = `
+                <div class="notification notification-info">
+                    <strong>Indexing already in progress</strong>
+                    <div class="notification-details">
+                        ${data.detail || 'Another indexing operation is running. Wait for it to finish, then try again.'}
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
         if (data.success) {
             const failedInfo = data.failed_conversations > 0
                 ? ` | <strong style="color: #721c24;">${data.failed_conversations} failed</strong>`
@@ -93,42 +105,17 @@ export async function shutdownServer(force = false) {
                 'background: #ff9800; border-left-color: #ff5722;' :
                 'background: #f44336;';
 
-            const warningMsg = data.forced ?
-                '<div style="margin-top: 8px; color: #fff; font-weight: 600;">⚠ FORCED SHUTDOWN - Indexing was interrupted. Index may be inconsistent.</div>' :
-                '';
-
             resultsDiv.innerHTML = `
                 <div class="results-header" style="${warningStyle} padding: 15px;">
                     <strong>✓ Server shutting down</strong>
-                    ${warningMsg}
                     <div style="margin-top: 8px; opacity: 0.9;">
                         You can close this window. To restart, run: <code style="background: #333; padding: 2px 6px;">searchat-web</code>
                     </div>
                 </div>
             `;
         } else if (data.indexing_in_progress) {
-            // Indexing is in progress - offer options
-            resultsDiv.innerHTML = `
-                <div class="results-header" style="background: #ff9800; padding: 15px; border-left: 3px solid #ff5722;">
-                    <strong>⚠ Indexing in Progress</strong>
-                    <div style="margin-top: 8px;">
-                        <strong>Operation:</strong> ${data.operation}<br>
-                        <strong>Files:</strong> ${data.files_total}<br>
-                        <strong>Elapsed:</strong> ${data.elapsed_seconds}s
-                    </div>
-                    <div style="margin-top: 12px; color: #fff;">
-                        Shutting down during indexing may corrupt data.
-                    </div>
-                    <div style="margin-top: 12px;">
-                        <button onclick="import('./modules/api.js').then(m => m.shutdownServer(true))" style="background: #f44336; color: white; border: none; padding: 8px 16px; cursor: pointer; margin-right: 10px;">
-                            Force Stop (Unsafe)
-                        </button>
-                        <button onclick="document.getElementById('results').innerHTML = ''" style="background: #4CAF50; color: white; border: none; padding: 8px 16px; cursor: pointer;">
-                            Wait for Completion
-                        </button>
-                    </div>
-                </div>
-            `;
+            // Indexing in progress - shut down anyway (DuckDB is transactional)
+            await shutdownServer(true);
         } else {
             resultsDiv.innerHTML = '<div style="color: #f44336;">Shutdown failed</div>';
         }

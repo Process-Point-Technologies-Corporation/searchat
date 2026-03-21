@@ -1,124 +1,89 @@
 """
-Custom Indexing Example
+Custom indexing and storage inspection example for Searchat.
 
-Demonstrates programmatic control over indexing.
-Use case: Manual index updates, selective indexing, monitoring index status.
-
-WARNING: This example is read-only to protect existing data.
-Modify carefully if you need to enable indexing operations.
+This example shows how to inspect the current unified storage and compare it
+against transcript files discoverable from the configured providers.
 
 Usage:
     python examples/custom_indexing.py
 """
 
-from pathlib import Path
-from searchat.indexer import ConversationIndexer
-from searchat.config import Config
-from searchat.path_resolver import PathResolver
+from searchat.agents import iter_providers
+from searchat.config import Config, PathResolver
+from searchat.core.conversation_filter import exclude_automated_conversations
+from searchat.core.unified_indexer import UnifiedIndexer
 
 
-def check_index_status():
-    """Check current index statistics."""
+def build_indexer() -> UnifiedIndexer:
     config = Config.load()
-    indexer = ConversationIndexer(config)
+    search_dir = PathResolver.get_shared_search_dir(config)
+    return UnifiedIndexer(search_dir, config)
 
-    print("Index Status")
+
+def print_storage_summary(indexer: UnifiedIndexer) -> None:
+    stats = indexer.storage.get_stats()
+    print("Storage Summary")
     print("=" * 70)
-
-    # Get statistics
-    stats = indexer.get_stats()
-
-    print(f"Total conversations: {stats.get('total_conversations', 0)}")
-    print(f"Total messages: {stats.get('total_messages', 0)}")
-    print(f"Index size: {stats.get('index_size_mb', 0):.2f} MB")
-    print(f"Last updated: {stats.get('last_updated', 'Never')}")
+    print(f"Conversations: {stats.get('conversations', 0)}")
+    print(f"Messages: {stats.get('messages', 0)}")
+    print(f"Exchanges: {stats.get('exchanges', 0)}")
+    print(f"Palace objects: {stats.get('palace_objects', 0)}")
+    print(f"Rooms: {stats.get('rooms', 0)}")
+    print()
 
 
-def list_indexed_conversations():
-    """List all indexed conversations."""
-    config = Config.load()
-    indexer = ConversationIndexer(config)
+def list_indexed_conversations(indexer: UnifiedIndexer, limit: int = 10) -> None:
+    rows = indexer.storage._get_cursor().execute(
+        """
+        SELECT conversation_id, project_id, title, message_count, file_path
+        FROM conversations
+        ORDER BY updated_at DESC
+        LIMIT ?
+        """,
+        [limit],
+    ).fetchall()
 
-    print("\nIndexed Conversations")
+    print("Recent Indexed Conversations")
     print("=" * 70)
-
-    # Get list of indexed files
-    indexed = indexer.list_indexed_files()
-
-    for i, file_info in enumerate(indexed[:10], 1):  # Show first 10
-        print(f"{i}. {file_info['name']}")
-        print(f"   Path: {file_info['path']}")
-        print(f"   Messages: {file_info.get('message_count', 'Unknown')}")
+    for idx, row in enumerate(rows, 1):
+        print(f"{idx}. {row[2]}")
+        print(f"   Conversation ID: {row[0]}")
+        print(f"   Project: {row[1]}")
+        print(f"   Messages: {row[3]}")
+        print(f"   Path: {row[4]}")
         print()
 
-    total = len(indexed)
-    if total > 10:
-        print(f"... and {total - 10} more")
 
-    print(f"\nTotal: {total} conversations indexed")
+def find_unindexed_source_files(indexer: UnifiedIndexer) -> None:
+    config = indexer.config
+    discovered: list[str] = []
+    for provider in iter_providers():
+        for root_dir in provider.discover_dirs(config):
+            pattern = "*.json" if provider.agent_id == "vibe" else "*.jsonl"
+            files = list(root_dir.glob(pattern)) if provider.agent_id == "vibe" else list(root_dir.rglob(pattern))
+            discovered.extend(str(path) for path in files)
 
+    discovered = exclude_automated_conversations(
+        discovered,
+        config.paths.excluded_conversations_dir,
+        config,
+    )
+    new_files, changed_files = indexer.detect_changed_files(discovered)
 
-def find_unindexed_conversations():
-    """Find conversations that haven't been indexed yet."""
-    config = Config.load()
-    indexer = ConversationIndexer(config)
-
-    print("\nUnindexed Conversations")
+    print("Source File Status")
     print("=" * 70)
-
-    # Get all conversation files
-    claude_dirs = PathResolver.resolve_claude_dirs(config)
-    all_conversations = []
-
-    for claude_dir in claude_dirs:
-        conversations_path = claude_dir / "projects"
-        if conversations_path.exists():
-            for conv_file in conversations_path.rglob("*.jsonl"):
-                all_conversations.append(conv_file)
-
-    # Get indexed files
-    indexed = set(indexer.list_indexed_files())
-
-    # Find unindexed
-    unindexed = [conv for conv in all_conversations if str(conv) not in indexed]
-
-    if unindexed:
-        for i, conv_path in enumerate(unindexed[:10], 1):
-            print(f"{i}. {conv_path.name}")
-            print(f"   Path: {conv_path}")
-            print()
-
-        total = len(unindexed)
-        if total > 10:
-            print(f"... and {total - 10} more")
-
-        print(f"\nTotal: {total} unindexed conversations")
-    else:
-        print("All conversations are indexed!")
-
-
-def main():
-    """Run custom indexing examples."""
-    print("Custom Indexing Operations")
-    print("=" * 70)
-    print()
-
-    # Example 1: Check index status
-    check_index_status()
-    print()
-
-    # Example 2: List indexed conversations
-    list_indexed_conversations()
-    print()
-
-    # Example 3: Find unindexed conversations
-    find_unindexed_conversations()
-    print()
-
-    print("=" * 70)
-    print("NOTE: Indexing operations (add/remove/rebuild) are disabled")
-    print("to protect existing data. See CLAUDE.md for data safety info.")
+    print(f"Discovered source files: {len(discovered)}")
+    print(f"New files: {len(new_files)}")
+    print(f"Changed files: {len(changed_files)}")
+    if new_files[:10]:
+        print()
+        print("Sample new files:")
+        for path in new_files[:10]:
+            print(f"- {path}")
 
 
 if __name__ == "__main__":
-    main()
+    idx = build_indexer()
+    print_storage_summary(idx)
+    list_indexed_conversations(idx)
+    find_unindexed_source_files(idx)

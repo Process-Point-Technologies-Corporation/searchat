@@ -1,145 +1,78 @@
 #!/usr/bin/env python
-"""
-Add missing conversations to the search index.
+"""Add newly discovered conversations to the Searchat index."""
 
-This script safely indexes conversations that aren't in your search index yet.
-It works across all configured directories (Windows, WSL, Vibe, etc.) and uses
-append-only mode - it never modifies or deletes existing indexed data.
-
-Usage:
-    index-missing
-
-For first-time setup, use setup-index instead.
-"""
+from __future__ import annotations
 
 import sys
-from pathlib import Path
-from searchat.config import Config
-from searchat.path_resolver import PathResolver
-from searchat.indexer import ConversationIndexer
+from datetime import datetime
 
-def main():
+from searchat.agents import iter_providers
+from searchat.config import Config, PathResolver
+from searchat.core.conversation_filter import exclude_automated_conversations
+from searchat.core.unified_indexer import UnifiedIndexer
+
+
+def main() -> int:
+    config = Config.load()
+    search_dir = PathResolver.get_shared_search_dir(config)
+    indexer = UnifiedIndexer(search_dir, config)
+
     print("=" * 70)
     print("Searchat - Add Missing Conversations")
     print("=" * 70)
-    print()
-    print("This script safely adds conversations that aren't in your index yet.")
-    print("It never modifies or deletes existing indexed data (append-only mode).")
-    print()
-
-    # Load configuration
-    print("Loading configuration...")
-    config = Config.load()
-    search_dir = PathResolver.get_shared_search_dir(config)
-
     print(f"Search directory: {search_dir}")
     print()
 
-    # Initialize indexer
-    indexer = ConversationIndexer(search_dir, config)
+    all_files: list[str] = []
+    for provider in iter_providers():
+        for root_dir in provider.discover_dirs(config):
+            try:
+                pattern = "*.json" if provider.agent_id == "vibe" else "*.jsonl"
+                files = list(root_dir.glob(pattern)) if provider.agent_id == "vibe" else list(root_dir.rglob(pattern))
+                all_files.extend(str(path) for path in files)
+                if files:
+                    print(f"[{provider.agent_id}] {root_dir}: {len(files)} files")
+            except Exception as exc:
+                print(f"[{provider.agent_id}] Failed to scan {root_dir}: {exc}")
 
-    # Get all conversation directories
-    print("Scanning conversation directories:")
-    claude_dirs = PathResolver.resolve_claude_dirs(config)
-    vibe_dirs = PathResolver.resolve_vibe_dirs()
+    print()
+    print(f"Total discovered files: {len(all_files)}")
 
-    all_dirs = claude_dirs + vibe_dirs
-    for d in all_dirs:
-        if d.exists():
-            print(f"  ✓ {d}")
-        else:
-            print(f"  ✗ {d} (not found)")
+    new_files, changed_files = indexer.detect_changed_files(all_files)
+    new_files = exclude_automated_conversations(
+        new_files,
+        config.paths.excluded_conversations_dir,
+        config,
+    )
+
+    print(f"New files: {len(new_files)}")
+    print(f"Changed files: {len(changed_files)}")
     print()
 
-    # Find all conversation files
-    all_files = []
+    if not new_files and not changed_files:
+        print("Index is already up to date.")
+        return 0
 
-    # Claude Code conversations (.jsonl)
-    for claude_dir in claude_dirs:
-        try:
-            jsonl_files = list(claude_dir.rglob("*.jsonl"))
-            if jsonl_files:
-                print(f"Found {len(jsonl_files)} Claude conversations in {claude_dir.name}/")
-            all_files.extend([str(f) for f in jsonl_files])
-        except Exception as e:
-            print(f"Error scanning {claude_dir}: {e}")
-
-    # Vibe sessions (.json)
-    for vibe_dir in vibe_dirs:
-        try:
-            json_files = list(vibe_dir.glob("*.json"))
-            if json_files:
-                print(f"Found {len(json_files)} Vibe sessions in {vibe_dir.name}/")
-            all_files.extend([str(f) for f in json_files])
-        except Exception as e:
-            print(f"Error scanning {vibe_dir}: {e}")
-
-    print(f"\n{'─' * 70}")
-    print(f"Total conversation files: {len(all_files)}")
-
-    # Get already indexed files
-    indexed_paths = indexer.get_indexed_file_paths()
-    print(f"Already indexed: {len(indexed_paths)}")
-
-    # Find new files
-    new_files = [f for f in all_files if f not in indexed_paths]
-    print(f"Missing from index: {len(new_files)}")
-    print(f"{'─' * 70}")
-
-    if not new_files:
-        print()
-        print("✓ All conversations are already indexed!")
-        print()
-        print("Your search index is up to date. The web server's live file watcher")
-        print("will automatically index new conversations as they are created.")
-        print()
-        print("To start the web server:")
-        print("  searchat-web")
-        return
-
-    # Ask for confirmation
-    print()
-    print(f"Action: Add {len(new_files)} missing conversations to index")
-    print("Mode: Append-only (safe, never modifies existing data)")
-    print()
-    response = input("Continue? (yes/no): ")
-    if response.lower() not in ('yes', 'y'):
+    response = input("Continue with append-safe indexing? (yes/no): ").strip().lower()
+    if response not in {"yes", "y"}:
         print("Cancelled.")
-        return
+        return 0
 
-    print()
-    print("Indexing conversations...")
-    print("This may take several minutes. Progress will be shown as files are processed.")
-    print()
+    started = datetime.now()
+    stats = indexer.index_from_source_files(new_files, changed_file_paths=changed_files)
+    if stats.get("exchanges_created", 0) > 0:
+        indexer.storage.create_fts_index()
 
-    # Index in batches to show progress
-    batch_size = 100
-    total_indexed = 0
-
-    for i in range(0, len(new_files), batch_size):
-        batch = new_files[i:i+batch_size]
-        print(f"\nProcessing batch {i//batch_size + 1}/{(len(new_files)-1)//batch_size + 1} ({len(batch)} files)...")
-
-        try:
-            stats = indexer.index_append_only(batch)
-            total_indexed += stats.new_conversations
-            print(f"  ✓ Indexed {stats.new_conversations} conversations in {stats.update_time_seconds:.1f}s")
-        except Exception as e:
-            print(f"  ✗ Error: {e}")
-            continue
-
+    elapsed = (datetime.now() - started).total_seconds()
     print()
-    print("=" * 70)
-    print("✓ Indexing Complete!")
-    print("=" * 70)
-    print(f"Conversations added to index: {total_indexed}")
-    print(f"Total indexed conversations: {len(indexed_paths) + total_indexed}")
-    print()
-    print("Your conversations are now searchable. Start the web server with:")
-    print("  searchat-web")
-    print()
-    print("The web server will automatically index new conversations as you create them.")
-    print("=" * 70)
+    print("Indexing complete.")
+    print(f"Added conversations: {stats.get('new_conversations', 0)}")
+    print(f"Updated conversations: {stats.get('updated_conversations', 0)}")
+    print(f"Failed conversations: {stats.get('skipped_errors', 0)}")
+    print(f"Exchanges created: {stats.get('exchanges_created', 0)}")
+    print(f"Elapsed seconds: {elapsed:.2f}")
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

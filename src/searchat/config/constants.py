@@ -67,7 +67,7 @@ DEFAULT_MODIFICATION_DEBOUNCE_MINUTES = 5
 DEFAULT_EXCLUDED_PROMPT_PREFIXES = (
     "Distill this conversation exchange into JSON",        # current perturn + batch distillation prompt
     "Distill the conversation exchange below into JSON",   # legacy perturn distillation prompt
-    "You are a strict relevance assessor",                 # optional relevance-assessment prompt
+    "You are a strict relevance assessor",                 # eval grading pipeline
     "Your task is to create a detailed summary of the conversation so far",   # Claude Code auto-compaction prompt
     "Your task is to create a detailed summary of the RECENT portion",        # Claude Code partial compaction variant
 )
@@ -83,12 +83,13 @@ DEFAULT_PALACE_WEIGHT = 0.5  # Weight for palace layer (before boost scaling)
 DEFAULT_VERBATIM_WEIGHT = 0.5  # Weight for verbatim layer (before boost scaling)
 
 # Hybrid Search Tuning Parameters
-DEFAULT_KEYWORD_WEIGHT = 0.8  # Weight for BM25 keyword results
-DEFAULT_SEMANTIC_WEIGHT = 0.2  # Weight for FAISS semantic results
+# These match settings.default.toml (production baseline after 100-query validation)
+DEFAULT_KEYWORD_WEIGHT = 0.6  # Weight for BM25 keyword results
+DEFAULT_SEMANTIC_WEIGHT = 0.4  # Weight for FAISS semantic results
 DEFAULT_RANK_DECAY = 0.1  # Decay constant for rank-based weighting (1/(1 + decay*rank))
 DEFAULT_TITLE_BOOST = 2.0  # Multiplier when query terms appear in title
-DEFAULT_BM25_K1 = 2.5  # BM25 term frequency saturation
-DEFAULT_BM25_B = 0.25  # BM25 document length normalization
+DEFAULT_BM25_K1 = 1.5  # BM25 term frequency saturation
+DEFAULT_BM25_B = 0.75  # BM25 document length normalization
 DEFAULT_BM25_CANDIDATES = 500  # Number of BM25 candidates to retrieve before filtering
 DEFAULT_FAISS_K = 100  # Number of FAISS nearest neighbors to retrieve
 
@@ -141,12 +142,33 @@ ENV_ADDITIONAL_DIRS = "SEARCHAT_ADDITIONAL_DIRS"
 ENV_PORT = "SEARCHAT_PORT"
 ENV_HOST = "SEARCHAT_HOST"
 
+ENV_AUTO_DETECT = "SEARCHAT_AUTO_DETECT"
+ENV_EXCLUDED_CONVERSATIONS_DIR = "SEARCHAT_EXCLUDED_CONVERSATIONS_DIR"
+
+ENV_INDEX_BATCH_SIZE = "SEARCHAT_INDEX_BATCH_SIZE"
+ENV_AUTO_INDEX = "SEARCHAT_AUTO_INDEX"
+ENV_INDEX_INTERVAL = "SEARCHAT_INDEX_INTERVAL"
+ENV_MAX_WORKERS = "SEARCHAT_MAX_WORKERS"
+ENV_REINDEX_ON_MODIFICATION = "SEARCHAT_REINDEX_ON_MODIFICATION"
+ENV_MODIFICATION_DEBOUNCE_MINUTES = "SEARCHAT_MODIFICATION_DEBOUNCE_MINUTES"
+
+ENV_DEFAULT_MODE = "SEARCHAT_DEFAULT_MODE"
+ENV_MAX_RESULTS = "SEARCHAT_MAX_RESULTS"
+ENV_SNIPPET_LENGTH = "SEARCHAT_SNIPPET_LENGTH"
+
 ENV_MEMORY_LIMIT = "SEARCHAT_MEMORY_LIMIT_MB"
 ENV_EMBEDDING_MODEL = "SEARCHAT_EMBEDDING_MODEL"
 ENV_EMBEDDING_BATCH = "SEARCHAT_EMBEDDING_BATCH_SIZE"
+ENV_CACHE_EMBEDDINGS = "SEARCHAT_CACHE_EMBEDDINGS"
+ENV_EMBEDDING_DEVICE = "SEARCHAT_EMBEDDING_DEVICE"
 ENV_CACHE_SIZE = "SEARCHAT_QUERY_CACHE_SIZE"
 ENV_PROFILING = "SEARCHAT_ENABLE_PROFILING"
 ENV_STARTUP_WARMUP_MODE = "SEARCHAT_STARTUP_WARMUP_MODE"
+
+ENV_THEME = "SEARCHAT_THEME"
+ENV_FONT_FAMILY = "SEARCHAT_FONT_FAMILY"
+ENV_FONT_SIZE = "SEARCHAT_FONT_SIZE"
+ENV_HIGHLIGHT_COLOR = "SEARCHAT_HIGHLIGHT_COLOR"
 
 ENV_ISOLATION_MODE = "SEARCHAT_ISOLATION_MODE"
 ENV_VARIANT_SUFFIX = "SEARCHAT_VARIANT_SUFFIX"
@@ -184,7 +206,7 @@ DEFAULT_DISTILLATION_CLI_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_DISTILLATION_CLI_MODEL_OPENAI = "gpt-5.3-codex"
 DEFAULT_DISTILLATION_BATCH_SIZE = 10
 DEFAULT_DISTILLATION_MAX_PLY_LENGTH = 20
-DEFAULT_DISTILLATION_MIN_EXCHANGE_CHARS = 100
+DEFAULT_DISTILLATION_MIN_EXCHANGE_CHARS = 50
 
 # Batch distillation prompt (comprehensive, for batch processing with room assignments)
 DEFAULT_DISTILLATION_PROMPT = """Distill this conversation exchange into JSON:
@@ -199,6 +221,18 @@ Project: {project_id}
 
 Exchange (messages {ply_start}-{ply_end}):
 {messages_text}
+
+Respond with ONLY valid JSON."""
+
+# Per-turn distillation prompt (simple, for real-time hook — uses {user_text}/{assistant_text})
+DEFAULT_PERTURN_PROMPT = """Distill this conversation exchange into JSON:
+
+- "exchange_core": 1-2 sentences. What was accomplished or decided? Use specific terms from the text.
+- "specific_context": One concrete detail: number, error message, parameter, or file path. Copy exactly.
+- "tags": 2-4 keywords for retrieval (lowercase, underscore-separated).
+
+User: {user_text}
+Assistant: {assistant_text}
 
 Respond with ONLY valid JSON."""
 
@@ -271,5 +305,3 @@ Try:
 2. Specify a different port: SEARCHAT_PORT=9000 searchat-web
 3. Check for zombie processes: netstat -ano | findstr :{port}
 """
-
-

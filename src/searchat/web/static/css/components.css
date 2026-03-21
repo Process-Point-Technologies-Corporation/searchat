@@ -286,13 +286,18 @@
 }
 
 .tool-badge.claude {
-    background: rgba(88, 166, 255, 0.15);
+    background: rgba(59, 130, 246, 0.15);
     color: var(--accent-primary);
 }
 
 .tool-badge.vibe {
-    background: rgba(255, 149, 0, 0.15);
+    background: rgba(234, 88, 12, 0.15);
     color: var(--warning);
+}
+
+.tool-badge.codex {
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--success);
 }
 
 /* Loading State */
@@ -385,4 +390,108 @@
 .theme-toggle button.active {
     background: var(--accent-primary);
     color: white;
+}
+
+/* Unified Search - Layer Badges */
+.layer-badge {
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-left: 6px;
+}
+
+.layer-badge.palace {
+    background: rgba(139, 92, 246, 0.2);
+    color: #a78bfa;
+}
+
+.layer-badge.verbatim {
+    background: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+}
+
+.layer-badge.intersection {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+}
+
+/* Unified Search - Intersection highlight */
+.result.intersection {
+    border-left-color: #fbbf24;
+}
+
+/* Unified Search - Rooms */
+.result-rooms {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 8px 0;
+}
+
+.room-tag {
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    background: rgba(139, 92, 246, 0.15);
+    color: #a78bfa;
+    cursor: default;
+}
+
+.room-more {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 3px 6px;
+}
+
+/* Unified Search - Files */
+.result-files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 6px 0;
+}
+
+.file-tag {
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--accent-primary);
+    cursor: default;
+}
+
+.file-more {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 3px 6px;
+}
+
+/* Unified Search - Palace Summary */
+.result-palace-summary {
+    color: var(--text-primary);
+    font-size: 15px;
+    line-height: 1.5;
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: rgba(139, 92, 246, 0.08);
+    border-left: 2px solid #a78bfa;
+    border-radius: 0 4px 4px 0;
+}
+
+/* Unified Search - Verbatim Snippet */
+.result-verbatim-snippet {
+    color: var(--text-muted);
+    font-size: 14px;
+    line-height: 1.5;
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(34, 197, 94, 0.08);
+    border-left: 2px solid #4ade80;
+    border-radius: 0 4px 4px 0;
 }

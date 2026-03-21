@@ -1,7 +1,7 @@
 """Unit tests for statistics and backup API routes."""
 import pytest
 from datetime import datetime
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -16,42 +16,23 @@ def client():
 
 
 @pytest.fixture
-def mock_search_engine():
-    """Mock SearchEngine with sample data."""
-    import pandas as pd
-    import numpy as np
-
+def mock_unified_engine():
+    """Mock UnifiedSearchEngine with DuckDB-style cursor."""
     mock = Mock()
+    mock_cursor = Mock()
 
-    now = datetime.now()
-    df = pd.DataFrame([
-        {
-            'conversation_id': 'conv-1',
-            'project_id': 'project-a',
-            'message_count': 10,
-            'created_at': datetime(2025, 1, 1),
-            'updated_at': datetime(2025, 1, 15)
-        },
-        {
-            'conversation_id': 'conv-2',
-            'project_id': 'project-b',
-            'message_count': 5,
-            'created_at': datetime(2025, 1, 10),
-            'updated_at': datetime(2025, 1, 20)
-        },
-        {
-            'conversation_id': 'conv-3',
-            'project_id': 'project-a',
-            'message_count': 15,
-            'created_at': datetime(2025, 1, 5),
-            'updated_at': datetime(2025, 1, 18)
-        }
-    ])
-
-    # Set conversation_id as index (matching production behavior)
-    mock.conversations_df = df.set_index('conversation_id', drop=False)
-
-    mock._initialize = Mock()
+    # Default: 3 conversations
+    mock_cursor.execute.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = (
+        3,    # total_conversations
+        30,   # total_messages
+        10.0, # avg_messages
+        2,    # total_projects
+        datetime(2025, 1, 1),  # earliest_date
+        datetime(2025, 1, 20), # latest_date
+    )
+    mock.storage._get_cursor.return_value = mock_cursor
+    mock.storage._get_read_cursor.return_value = mock_cursor
 
     return mock
 
@@ -79,6 +60,14 @@ def mock_backup_manager():
     return mock
 
 
+@pytest.fixture
+def mock_unified_indexer():
+    """Mock UnifiedIndexer for restore tests."""
+    mock = Mock()
+    mock.index_from_parquet.return_value = {"conversations_indexed": 5, "exchanges_indexed": 50}
+    return mock
+
+
 # ============================================================================
 # STATISTICS ENDPOINT TESTS
 # ============================================================================
@@ -87,9 +76,9 @@ def mock_backup_manager():
 class TestStatisticsEndpoint:
     """Tests for GET /api/statistics endpoint."""
 
-    def test_get_statistics_success(self, client, mock_search_engine):
+    def test_get_statistics_success(self, client, mock_unified_engine):
         """Test getting index statistics."""
-        with patch('searchat.api.routers.stats.get_search_engine', return_value=mock_search_engine):
+        with patch('searchat.api.routers.stats.get_unified_search_engine', return_value=mock_unified_engine):
             response = client.get("/api/statistics")
 
             assert response.status_code == 200
@@ -104,27 +93,30 @@ class TestStatisticsEndpoint:
 
             # Verify values
             assert data["total_conversations"] == 3
-            assert data["total_messages"] == 30  # 10 + 5 + 15
-            assert data["avg_messages"] == 10.0  # 30 / 3
-            assert data["total_projects"] == 2  # project-a, project-b
+            assert data["total_messages"] == 30
+            assert data["avg_messages"] == 10.0
+            assert data["total_projects"] == 2
             assert data["earliest_date"] == "2025-01-01T00:00:00"
             assert data["latest_date"] == "2025-01-20T00:00:00"
 
     def test_get_statistics_single_conversation(self, client):
         """Test statistics with single conversation."""
-        import pandas as pd
-
         mock_engine = Mock()
+        mock_cursor = Mock()
         now = datetime.now()
-        mock_engine.conversations_df = pd.DataFrame([{
-            'conversation_id': 'conv-1',
-            'project_id': 'test-project',
-            'message_count': 10,
-            'created_at': now,
-            'updated_at': now
-        }])
+        mock_cursor.execute.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = (
+            1,     # total_conversations
+            10,    # total_messages
+            10.0,  # avg_messages
+            1,     # total_projects
+            now,   # earliest_date
+            now,   # latest_date
+        )
+        mock_engine.storage._get_cursor.return_value = mock_cursor
+        mock_engine.storage._get_read_cursor.return_value = mock_cursor
 
-        with patch('searchat.api.routers.stats.get_search_engine', return_value=mock_engine):
+        with patch('searchat.api.routers.stats.get_unified_search_engine', return_value=mock_engine):
             response = client.get("/api/statistics")
 
             assert response.status_code == 200
@@ -134,6 +126,12 @@ class TestStatisticsEndpoint:
             assert data["total_messages"] == 10
             assert data["avg_messages"] == 10.0
             assert data["total_projects"] == 1
+
+    def test_get_statistics_no_engine(self, client):
+        """Test statistics when unified engine not available."""
+        with patch('searchat.api.routers.stats.get_unified_search_engine', return_value=None):
+            response = client.get("/api/statistics")
+            assert response.status_code == 503
 
 
 # ============================================================================
@@ -224,7 +222,7 @@ class TestListBackupsEndpoint:
 class TestRestoreBackupEndpoint:
     """Tests for POST /api/backup/restore endpoint."""
 
-    def test_restore_backup_success(self, client, mock_backup_manager, mock_search_engine, tmp_path):
+    def test_restore_backup_success(self, client, mock_backup_manager, mock_unified_indexer, tmp_path):
         """Test restoring from a backup."""
         # Create backup directory
         backup_dir = tmp_path / "backup_20250120_100000"
@@ -234,8 +232,8 @@ class TestRestoreBackupEndpoint:
         mock_backup_manager.restore_from_backup.return_value = None
 
         with patch('searchat.api.routers.backup.get_backup_manager', return_value=mock_backup_manager):
-            with patch('searchat.api.routers.backup.get_search_engine', return_value=mock_search_engine):
-                with patch('searchat.api.routers.backup.projects_cache', None):
+            with patch('searchat.api.routers.backup.get_unified_indexer', return_value=mock_unified_indexer):
+                with patch('searchat.api.dependencies.projects_cache', None):
                     response = client.post("/api/backup/restore?backup_name=backup_20250120_100000")
 
                     assert response.status_code == 200
@@ -247,21 +245,20 @@ class TestRestoreBackupEndpoint:
 
                     # Verify restore was called
                     mock_backup_manager.restore_from_backup.assert_called_once()
-                    # Verify search engine was reloaded
-                    mock_search_engine._initialize.assert_called_once()
+                    # Verify unified indexer rebuilt DB
+                    mock_unified_indexer.index_from_parquet.assert_called_once()
 
-    def test_restore_backup_not_found(self, client, mock_backup_manager, mock_search_engine, tmp_path):
+    def test_restore_backup_not_found(self, client, mock_backup_manager, tmp_path):
         """Test error when backup doesn't exist."""
         mock_backup_manager.backup_dir = tmp_path
 
         with patch('searchat.api.routers.backup.get_backup_manager', return_value=mock_backup_manager):
-            with patch('searchat.api.routers.backup.get_search_engine', return_value=mock_search_engine):
-                response = client.post("/api/backup/restore?backup_name=nonexistent")
+            response = client.post("/api/backup/restore?backup_name=nonexistent")
 
-                assert response.status_code == 404
-                assert "not found" in response.json()["detail"]
+            assert response.status_code == 404
+            assert "not found" in response.json()["detail"]
 
-    def test_restore_backup_with_pre_restore_backup(self, client, mock_backup_manager, mock_search_engine, tmp_path):
+    def test_restore_backup_with_pre_restore_backup(self, client, mock_backup_manager, mock_unified_indexer, tmp_path):
         """Test restore creates pre-restore backup."""
         backup_dir = tmp_path / "backup_20250120_100000"
         backup_dir.mkdir()
@@ -274,8 +271,8 @@ class TestRestoreBackupEndpoint:
         mock_backup_manager.restore_from_backup.return_value = pre_restore_meta
 
         with patch('searchat.api.routers.backup.get_backup_manager', return_value=mock_backup_manager):
-            with patch('searchat.api.routers.backup.get_search_engine', return_value=mock_search_engine):
-                with patch('searchat.api.routers.backup.projects_cache', None):
+            with patch('searchat.api.routers.backup.get_unified_indexer', return_value=mock_unified_indexer):
+                with patch('searchat.api.dependencies.projects_cache', None):
                     response = client.post("/api/backup/restore?backup_name=backup_20250120_100000")
 
                     assert response.status_code == 200

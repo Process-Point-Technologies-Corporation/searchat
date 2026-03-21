@@ -25,8 +25,10 @@ curl -s "http://localhost:8000/api/conversation/CONVERSATION_ID" | jq '.messages
 
 **Parameters:**
 - `q` — search query (supports natural language)
-- `mode` — hybrid (default, best), semantic, keyword
+- `mode` - cross-layer (default), distill, verbatim
 - `limit` — max results (1-100, default 100)
 - `project` — filter by project name
 
-**Start server:** `searchat-web` from the searchat directory
+**Start server:** `searchat-web`
+
+

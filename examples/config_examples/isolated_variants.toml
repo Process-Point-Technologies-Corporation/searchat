@@ -1,24 +1,24 @@
 # Isolated Variants Configuration Example
 #
 # Use case: Running multiple searchat variants concurrently
-# Each variant has its own data directory to prevent FAISS index conflicts
+# Each variant has its own data directory to prevent index conflicts
 #
-# This is the actual configuration pattern used in the searchat directory
-# to prevent corruption when testing multiple implementations simultaneously
+# Example configuration pattern for running multiple Searchat variants safely
+# Each variant keeps its own data directory and port
 
 [paths]
 # CRITICAL: Each variant MUST use a different search directory
 #
 # This prevents:
-# - FAISS index file locking conflicts
-# - Parquet file concurrent write corruption
+# - DuckDB file locking conflicts
+# - Distillation index conflicts
 # - Cache invalidation issues
 
 search_directory = "C:/Users/{username}/.searchat"
 
 # All variants can share the same source Claude directories
 claude_directory_windows = "C:/Users/{username}/.claude"
-claude_directory_wsl = "\\\\wsl$\\Ubuntu\\home\\syd\\.claude"
+claude_directory_wsl = "\\\\wsl$\\Ubuntu\\home\\{username}\\.claude"
 
 auto_detect_environment = true
 
@@ -29,7 +29,7 @@ index_interval_minutes = 60
 max_workers = 4
 
 [search]
-default_mode = "hybrid"
+default_mode = "cross-layer"
 max_results = 100
 snippet_length = 200
 
@@ -51,7 +51,7 @@ enable_profiling = false
 
 # Environment variable overrides:
 #
-#   SEARCHAT_DATA_DIR=C:/Users/Syd/.searchat
+#   SEARCHAT_DATA_DIR=~/.searchat
 #   SEARCHAT_PORT=8000
 
 # Directory structure:
@@ -60,8 +60,10 @@ enable_profiling = false
 # │   ├── settings.toml
 # │   └── .env
 # ├── data/
-# │   ├── conversations.parquet
-# │   ├── faiss.index
-# │   └── embeddings_cache/
+# │   ├── searchat.duckdb
+# │   ├── palace.duckdb
+# │   └── watcher_file_cache.json
 # └── logs/
 #     └── searchat.log
+
+

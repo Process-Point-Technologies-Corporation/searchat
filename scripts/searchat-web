@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-"""Searchat Web Interface"""
+"""Searchat web server entrypoint."""
 
-from searchat.web_api import main
+from searchat.api.app import main
 
 if __name__ == "__main__":
     main()
