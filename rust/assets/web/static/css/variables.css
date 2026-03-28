@@ -1,0 +1,72 @@
+/* CSS Variables - Light Theme (GitHub Light) */
+:root {
+    --bg-primary: #ffffff;
+    --bg-surface: #f6f8fa;
+    --bg-elevated: #ffffff;
+    --text-primary: #24292f;
+    --text-muted: #57606a;
+    --text-subtle: #6e7681;
+    --border-default: #d0d7de;
+    --border-muted: #d8dee4;
+    --accent-primary: #0969da;
+    --accent-secondary: #0550ae;
+    --success: #1a7f37;
+    --warning: #9a6700;
+    --danger: #cf222e;
+    --code-bg: rgba(175, 184, 193, 0.2);
+}
+
+/* Dark Theme - Applied via system preference or manual selection */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --bg-primary: #0d1117;
+        --bg-surface: #161b22;
+        --bg-elevated: #1c2128;
+        --text-primary: #c9d1d9;
+        --text-muted: #8b949e;
+        --text-subtle: #6e7681;
+        --border-default: #30363d;
+        --border-muted: #21262d;
+        --accent-primary: #58a6ff;
+        --accent-secondary: #1f6feb;
+        --success: #3fb950;
+        --warning: #d29922;
+        --danger: #f85149;
+        --code-bg: rgba(110, 118, 129, 0.1);
+    }
+}
+
+/* Manual theme overrides */
+:root[data-theme="dark"] {
+    --bg-primary: #0d1117;
+    --bg-surface: #161b22;
+    --bg-elevated: #1c2128;
+    --text-primary: #c9d1d9;
+    --text-muted: #8b949e;
+    --text-subtle: #6e7681;
+    --border-default: #30363d;
+    --border-muted: #21262d;
+    --accent-primary: #58a6ff;
+    --accent-secondary: #1f6feb;
+    --success: #3fb950;
+    --warning: #d29922;
+    --danger: #f85149;
+    --code-bg: rgba(110, 118, 129, 0.1);
+}
+
+:root[data-theme="light"] {
+    --bg-primary: #ffffff;
+    --bg-surface: #f6f8fa;
+    --bg-elevated: #ffffff;
+    --text-primary: #24292f;
+    --text-muted: #57606a;
+    --text-subtle: #6e7781;
+    --border-default: #d0d7de;
+    --border-muted: #d8dee4;
+    --accent-primary: #0969da;
+    --accent-secondary: #0550ae;
+    --success: #1a7f37;
+    --warning: #9a6700;
+    --danger: #cf222e;
+    --code-bg: rgba(175, 184, 193, 0.2);
+}

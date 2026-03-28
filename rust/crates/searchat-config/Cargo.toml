@@ -1,0 +1,15 @@
+[package]
+name = "searchat-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+searchat-models = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+chrono = { workspace = true }
+dirs = { workspace = true }
+dotenvy = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }

@@ -1,0 +1,79 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/searchat-models",
+    "crates/searchat-config",
+    "crates/searchat-agents",
+    "crates/searchat-storage",
+    "crates/searchat-embed",
+    "crates/searchat-search",
+    "crates/searchat-watcher",
+    "crates/searchat-api",
+    "crates/searchat-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+
+# Database
+duckdb = { version = "1.2", features = ["bundled", "chrono"] }
+
+# Embedding
+ort = { version = "=2.0.0-rc.12", features = ["download-binaries"] }
+tokenizers = "0.21"
+ndarray = "0.16"
+
+# Filesystem
+notify = "7"
+notify-debouncer-mini = "0.5"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+regex = "1"
+log = "0.4"
+env_logger = "0.11"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+thiserror = "2"
+dirs = "6"
+dotenvy = "0.15"
+lru = "0.12"
+parking_lot = "0.12"
+
+# Workspace crates
+searchat-models = { path = "crates/searchat-models" }
+searchat-config = { path = "crates/searchat-config" }
+searchat-agents = { path = "crates/searchat-agents" }
+searchat-storage = { path = "crates/searchat-storage" }
+searchat-embed = { path = "crates/searchat-embed" }
+searchat-search = { path = "crates/searchat-search" }
+searchat-watcher = { path = "crates/searchat-watcher" }
+searchat-api = { path = "crates/searchat-api" }
+searchat-cli = { path = "crates/searchat-cli" }
+
+[[workspace.metadata.bin]]
+name = "searchat"
+path = "crates/searchat-cli/src/main.rs"

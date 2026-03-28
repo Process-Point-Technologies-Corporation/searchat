@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Searchat - Conversation</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Preload fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="/static/css/variables.css">
+    <link rel="stylesheet" href="/static/css/base.css">
+
+    <style>
+        body {
+            font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            font-size: 16px;
+            line-height: 1.6;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 24px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            position: relative;
+        }
+
+        .back-button {
+            font-family: 'Space Grotesk', sans-serif;
+            padding: 10px 20px;
+            background: var(--accent-secondary);
+            color: white;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            display: inline-block;
+            margin-bottom: 24px;
+            border-radius: 6px;
+            transition: background-color 0.2s ease;
+        }
+
+        .back-button:hover {
+            background: var(--accent-primary);
+        }
+
+        .header {
+            background: var(--bg-surface);
+            padding: 20px;
+            margin-bottom: 24px;
+            border: 1px solid var(--border-default);
+            border-left: 3px solid var(--accent-primary);
+            border-radius: 6px;
+        }
+
+        .header h2 {
+            font-family: 'Space Grotesk', sans-serif;
+            color: var(--text-primary);
+            margin: 0 0 12px 0;
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .header div {
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .message {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-left: 3px solid transparent;
+            border-radius: 6px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .message.user {
+            border-left-color: var(--success);
+        }
+
+        .message.assistant {
+            border-left-color: var(--accent-primary);
+        }
+
+        .role {
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .content {
+            white-space: pre-wrap;
+            font-family: 'IBM Plex Sans', sans-serif;
+            color: var(--text-primary);
+            font-size: 16px;
+            line-height: 1.6;
+        }
+
+        /* Theme Toggle */
+        .theme-toggle {
+            position: absolute;
+            top: 0;
+            right: 0;
+            display: flex;
+            gap: 4px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: 6px;
+            padding: 4px;
+            z-index: 100;
+        }
+
+        .theme-toggle button {
+            font-family: 'Space Grotesk', sans-serif;
+            padding: 6px 12px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-size: 12px;
+            color: var(--text-muted);
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+
+        .theme-toggle button:hover {
+            background: var(--bg-elevated);
+        }
+
+        .theme-toggle button.active {
+            background: var(--accent-primary);
+            color: white;
+        }
+
+        /* Tool badges */
+        .tool-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: 'Space Grotesk', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+        }
+
+        .tool-badge.claude {
+            background: rgba(59, 130, 246, 0.15);
+            color: var(--accent-primary);
+        }
+
+        .tool-badge.vibe {
+            background: rgba(234, 88, 12, 0.15);
+            color: var(--warning);
+        }
+
+        .tool-badge.codex {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--success);
+        }
+
+        /* Resume button */
+        .resume-btn {
+            font-family: 'Space Grotesk', sans-serif;
+            margin-top: 12px;
+            padding: 8px 16px;
+            background: var(--success);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .resume-btn:hover:not(:disabled) {
+            filter: brightness(1.1);
+        }
+
+        .resume-btn:disabled {
+            opacity: 0.7;
+            cursor: wait;
+        }
+
+        .resume-btn.success {
+            background: var(--accent-primary);
+        }
+
+        .resume-btn.error {
+            background: var(--danger);
+        }
+
+        /* Action buttons container */
+        .header-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+
+        .download-btn {
+            font-family: 'Space Grotesk', sans-serif;
+            padding: 8px 14px;
+            background: var(--accent-secondary);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .download-btn:hover {
+            background: var(--accent-primary);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+    <!-- Theme Toggle -->
+    <div class="theme-toggle">
+        <button onclick="setTheme('light')" data-theme="light">Light</button>
+        <button onclick="setTheme('system')" data-theme="system" class="active">System</button>
+        <button onclick="setTheme('dark')" data-theme="dark">Dark</button>
+    </div>
+
+    <a href="/" class="back-button">Back to Search</a>
+    <div id="conversation"><div class="loading">Loading conversation...</div></div>
+
+    <script>
+        // Theme Management
+        function setTheme(theme) {
+            localStorage.setItem('theme-preference', theme);
+            applyTheme(theme);
+            document.querySelectorAll('.theme-toggle button').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.theme === theme);
+            });
+        }
+
+        function applyTheme(theme) {
+            const root = document.documentElement;
+            if (theme === 'system') {
+                root.removeAttribute('data-theme');
+            } else {
+                root.setAttribute('data-theme', theme);
+            }
+        }
+
+        function initTheme() {
+            const savedTheme = localStorage.getItem('theme-preference') || 'system';
+            applyTheme(savedTheme);
+            document.querySelectorAll('.theme-toggle button').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.theme === savedTheme);
+            });
+        }
+
+        initTheme();
+
+        // Extract conversation ID from URL path
+        const conversationId = window.location.pathname.split('/conversation/')[1];
+
+        // Store conversation data globally for download functions
+        let conversationData = null;
+
+        async function loadConversation() {
+            const div = document.getElementById('conversation');
+
+            if (!conversationId) {
+                div.innerHTML = `
+                    <div class="header" style="border-left-color: var(--danger);">
+                        <h2>Error</h2>
+                    </div>
+                    <div class="message" style="border-left-color: var(--danger);">
+                        <div class="role">ERROR</div>
+                        <div class="content">No conversation ID provided in URL</div>
+                    </div>
+                `;
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/conversation/${conversationId}`);
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({detail: 'Unknown error'}));
+                    throw new Error(errorData.detail || `HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+
+                // Validate data
+                if (!data || typeof data !== 'object') {
+                    throw new Error('Invalid response data');
+                }
+
+                // Store for download functions
+                conversationData = data;
+
+                // Detect tool from file_path
+                const tool = data.tool || (data.file_path.endsWith('.jsonl') ? 'claude' : 'vibe');
+                const toolLabel = tool === 'claude' ? 'Claude Code' : (tool === 'codex' ? 'Codex' : 'Vibe');
+
+                div.innerHTML = `
+                    <div class="header">
+                        <span class="tool-badge ${tool}">${toolLabel}</span>
+                        <h2>${data.title || 'No title available'}</h2>
+                        <div>Project: ${data.project_id || 'Unknown'} | Messages: ${data.message_count || 0}</div>
+                        <div class="header-actions">
+                            <button class="resume-btn" id="resumeBtn">Resume Session</button>
+                            <button class="download-btn" id="downloadTxt">Download TXT</button>
+                            <button class="download-btn" id="downloadHtml">Download HTML</button>
+                        </div>
+                    </div>
+                `;
+
+                // Add button handlers
+                document.getElementById('resumeBtn').addEventListener('click', function() {
+                    resumeSession(conversationId, this);
+                });
+                document.getElementById('downloadTxt').addEventListener('click', downloadAsTxt);
+                document.getElementById('downloadHtml').addEventListener('click', downloadAsHtml);
+
+                if (data.messages && Array.isArray(data.messages)) {
+                    data.messages.forEach((msg, i) => {
+                        const msgDiv = document.createElement('div');
+                        msgDiv.className = `message ${msg.role || 'unknown'}`;
+                        // Use raw JSONL ply index as DOM id (matches search result ply_start/ply_end)
+                        const plyId = msg.ply_index != null ? msg.ply_index : i;
+                        msgDiv.id = `ply-${plyId}`;
+                        msgDiv.innerHTML = `
+                            <div class="role">${(msg.role || 'unknown').toUpperCase()} - Message ${i + 1}</div>
+                            <div class="content">${escapeHtml((msg.content || '').substring(0, 2000))}${(msg.content || '').length > 2000 ? '...[truncated]' : ''}</div>
+                        `;
+                        div.appendChild(msgDiv);
+                    });
+
+                    // Scroll to exchange if ply_start is in URL params
+                    scrollToExchange();
+                } else {
+                    div.innerHTML += '<div class="message">No messages available</div>';
+                }
+            } catch (error) {
+                div.innerHTML = `
+                    <div class="header" style="border-left-color: var(--danger);">
+                        <h2>Error Loading Conversation</h2>
+                    </div>
+                    <div class="message" style="border-left-color: var(--danger);">
+                        <div class="role">ERROR</div>
+                        <div class="content">${escapeHtml(error.message)}</div>
+                        <div class="content" style="margin-top: 10px; opacity: 0.7;">
+                            Conversation ID: ${escapeHtml(conversationId)}
+                        </div>
+                    </div>
+                `;
+                console.error('Error loading conversation:', error);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function resumeSession(convId, buttonElement) {
+            const originalText = buttonElement.innerHTML;
+            buttonElement.innerHTML = 'Opening...';
+            buttonElement.disabled = true;
+
+            try {
+                const response = await fetch('/api/resume', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ conversation_id: convId })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    buttonElement.innerHTML = 'Opened in terminal';
+                    buttonElement.classList.add('success');
+                    setTimeout(() => {
+                        buttonElement.innerHTML = originalText;
+                        buttonElement.classList.remove('success');
+                        buttonElement.disabled = false;
+                    }, 2000);
+                } else {
+                    throw new Error(data.detail || 'Failed to resume session');
+                }
+            } catch (error) {
+                buttonElement.innerHTML = 'Failed - check console';
+                buttonElement.classList.add('error');
+                console.error('Resume error:', error);
+                setTimeout(() => {
+                    buttonElement.innerHTML = originalText;
+                    buttonElement.classList.remove('error');
+                    buttonElement.disabled = false;
+                }, 3000);
+            }
+        }
+
+        function downloadAsTxt() {
+            if (!conversationData) return;
+
+            const lines = [];
+            lines.push(`Title: ${conversationData.title || 'Untitled'}`);
+            lines.push(`Project: ${conversationData.project_id || 'Unknown'}`);
+            lines.push(`Messages: ${conversationData.message_count || 0}`);
+            lines.push(`Conversation ID: ${conversationId}`);
+            lines.push('');
+            lines.push('='.repeat(80));
+            lines.push('');
+
+            if (conversationData.messages) {
+                conversationData.messages.forEach((msg, i) => {
+                    const role = (msg.role || 'unknown').toUpperCase();
+                    lines.push(`[${role}] Message ${i + 1}`);
+                    lines.push('-'.repeat(40));
+                    lines.push(msg.content || '');
+                    lines.push('');
+                });
+            }
+
+            const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `conversation-${conversationId.slice(-8)}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function downloadAsHtml() {
+            if (!conversationData) return;
+
+            const messages = (conversationData.messages || []).map((msg, i) => {
+                const role = (msg.role || 'unknown');
+                const roleUpper = role.toUpperCase();
+                const bgColor = role === 'user' ? '#e8f5e9' : '#e3f2fd';
+                const borderColor = role === 'user' ? '#4caf50' : '#2196f3';
+                const content = escapeHtml(msg.content || '').replace(/\n/g, '<br>');
+                return `
+                    <div style="background: ${bgColor}; border-left: 3px solid ${borderColor}; padding: 15px; margin: 15px 0; border-radius: 4px;">
+                        <div style="font-weight: bold; margin-bottom: 10px; color: #333;">${roleUpper} - Message ${i + 1}</div>
+                        <div style="white-space: pre-wrap; font-family: inherit;">${content}</div>
+                    </div>
+                `;
+            }).join('');
+
+            const html = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>${escapeHtml(conversationData.title || 'Conversation')}</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; line-height: 1.6; }
+        h1 { color: #333; border-bottom: 2px solid #2196f3; padding-bottom: 10px; }
+        .meta { color: #666; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <h1>${escapeHtml(conversationData.title || 'Untitled Conversation')}</h1>
+    <div class="meta">
+        <strong>Project:</strong> ${escapeHtml(conversationData.project_id || 'Unknown')} |
+        <strong>Messages:</strong> ${conversationData.message_count || 0} |
+        <strong>ID:</strong> ${escapeHtml(conversationId)}
+    </div>
+    ${messages}
+</body>
+</html>`;
+
+            const blob = new Blob([html], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `conversation-${conversationId.slice(-8)}.html`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function scrollToExchange() {
+            const params = new URLSearchParams(window.location.search);
+            const plyStart = params.get('ply_start');
+            const plyEnd = params.get('ply_end');
+            if (plyStart == null) return;
+
+            const start = parseInt(plyStart);
+            const end = plyEnd != null ? parseInt(plyEnd) : start;
+
+            // Collect all message elements with their ply indices
+            const allMsgs = document.querySelectorAll('[id^="ply-"]');
+            const plyElements = [];
+            allMsgs.forEach(el => {
+                const idx = parseInt(el.id.replace('ply-', ''));
+                if (!isNaN(idx)) plyElements.push({ el, idx });
+            });
+
+            // Highlight messages within the exchange ply range
+            let highlighted = 0;
+            for (const { el, idx } of plyElements) {
+                if (idx >= start && idx <= end) {
+                    el.style.boxShadow = '0 0 0 2px var(--accent-primary)';
+                    el.style.background = 'var(--bg-elevated)';
+                    highlighted++;
+                }
+            }
+
+            // Find scroll target: first highlighted, or nearest message to ply_start
+            let target = null;
+            if (highlighted > 0) {
+                target = plyElements.find(p => p.idx >= start && p.idx <= end)?.el;
+            } else {
+                // No displayable messages in range (all tool blocks).
+                // Find nearest message after ply_start, then try before.
+                const after = plyElements.filter(p => p.idx > end);
+                const before = plyElements.filter(p => p.idx < start);
+                if (after.length > 0) {
+                    target = after[0].el;
+                    target.style.boxShadow = '0 0 0 2px var(--warning)';
+                    target.style.background = 'var(--bg-elevated)';
+                } else if (before.length > 0) {
+                    target = before[before.length - 1].el;
+                    target.style.boxShadow = '0 0 0 2px var(--warning)';
+                    target.style.background = 'var(--bg-elevated)';
+                }
+            }
+
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+
+        loadConversation();
+    </script>
+</body>
+</html>

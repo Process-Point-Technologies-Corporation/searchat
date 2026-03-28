@@ -1,0 +1,25 @@
+[package]
+name = "searchat-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+searchat-models = { workspace = true }
+searchat-config = { workspace = true }
+searchat-storage = { workspace = true }
+searchat-search = { workspace = true }
+searchat-watcher = { workspace = true }
+searchat-embed = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+log = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }

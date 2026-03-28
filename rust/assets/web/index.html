@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Searchat</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Preload fonts for optimal performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="/static/css/variables.css">
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/layout.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+
+</head>
+<body>
+    <div class="container">
+        <!-- Left Sidebar: Search Tips -->
+        <div class="sidebar">
+            <h3>💡 Search Tips</h3>
+
+            <div class="tip">
+                <div class="tip-title">Search Modes</div>
+                <div class="tip-content">
+                    <strong>Cross-Layer</strong> - BM25 + semantic fusion (default)<br>
+                    <strong>Verbatim</strong> - BM25 keyword on full text<br>
+                    <strong>Distill</strong> - Semantic on compressed summaries
+                </div>
+            </div>
+
+            <div class="tip">
+                <div class="tip-title">Keyboard Shortcut</div>
+                <div class="tip-content">
+                    Press <kbd>Enter</kbd> in search box to search
+                </div>
+            </div>
+
+            <div class="tip">
+                <div class="tip-title">Live Indexing</div>
+                <div class="tip-content">
+                    New conversations are indexed automatically. In-progress sessions re-index 5 minutes after last edit.
+                </div>
+            </div>
+
+            <div class="tip">
+                <div class="tip-title">Missing Conversations?</div>
+                <div class="tip-content">
+                    Click <strong>Add Missing Conversations</strong> to index files not yet in the search index.
+                </div>
+            </div>
+
+            <div class="tip">
+                <div class="tip-title">Filter by Project</div>
+                <div class="tip-content">
+                    Use the Project dropdown to search within specific projects only.
+                </div>
+            </div>
+
+            <!-- Backup & Restore Section -->
+            <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border-muted);">
+                <h3 style="color: var(--warning); margin-bottom: 16px;">🔒 Backup & Restore</h3>
+
+                <button onclick="createBackup()" style="width: 100%; background: var(--success); color: white; padding: 10px; border: none; border-radius: 6px; cursor: pointer; margin-bottom: 10px; font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 500;">
+                    Create Backup
+                </button>
+
+                <button onclick="showBackups()" style="width: 100%; background: var(--accent-primary); color: white; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 500;">
+                    Manage Backups
+                </button>
+
+                <div class="tip" style="margin-top: 16px;">
+                    <div class="tip-content" style="font-size: 12px;">
+                        Backups protect your search index. Always create a backup before major changes.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Theme Toggle -->
+            <div class="theme-toggle">
+                <button onclick="setTheme('light')" data-theme="light">Light</button>
+                <button onclick="setTheme('system')" data-theme="system" class="active">System</button>
+                <button onclick="setTheme('dark')" data-theme="dark">Dark</button>
+            </div>
+
+            <!-- Indexing status banner (hidden by default, shown via JS polling) -->
+            <div id="indexing-banner" style="display: none; background: var(--accent-primary, #3B82F6); color: white; padding: 10px 16px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; align-items: center; gap: 10px;">
+                <span class="indexing-spinner" style="display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0;"></span>
+                <span id="indexing-banner-text">Indexing in progress...</span>
+            </div>
+            <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+
+            <h1 style="margin-bottom: 4px;"><span style="color: #3B82F6">sear</span><span style="background: linear-gradient(to right, #3B82F6, #EA580C); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">ch</span><span style="color: #EA580C">at</span></h1>
+            <p style="margin: 0 0 20px 0; font-size: 13px; color: #888;">Semantic search for AI coding agent conversations</p>
+            <input type="text" id="search" class="search-box" placeholder="Search conversations..." />
+
+            <div class="filters">
+        <label>Mode:
+            <select id="mode">
+                <option value="cross-layer" selected>Cross-Layer</option>
+                <option value="verbatim">Verbatim</option>
+                <option value="distill">Distill</option>
+            </select>
+        </label>
+        
+        <label>Project: 
+            <select id="project">
+                <option value="">All Projects</option>
+            </select>
+        </label>
+        
+        <label>Date: 
+            <select id="date" onchange="toggleCustomDate()">
+                <option value="">Any time</option>
+                <option value="today">Today</option>
+                <option value="week">Last 7 days</option>
+                <option value="month">Last 30 days</option>
+                <option value="custom">Custom range</option>
+            </select>
+        </label>
+        
+        <span id="customDateRange" style="display:none;">
+            <label>From: <input type="date" id="dateFrom" /></label>
+            <label>To: <input type="date" id="dateTo" /></label>
+        </span>
+        
+        <label>Sort by: 
+            <select id="sortBy">
+                <option value="relevance">Relevance</option>
+                <option value="date_newest">Date (newest)</option>
+                <option value="date_oldest">Date (oldest)</option>
+                <option value="messages">Message count</option>
+            </select>
+        </label>
+        
+        <button onclick="search()">Search</button>
+        <button onclick="showAllConversations()" style="background: #2196F3; margin-left: 10px;">Show All</button>
+        <button onclick="indexMissing()" style="background: #4CAF50; margin-left: 10px;" title="Safely add conversations that aren't in the index yet">Add Missing Conversations</button>
+        <button onclick="shutdownServer()" style="background: #f44336; margin-left: 10px;" title="Stop the search server">Stop Server</button>
+    </div>
+
+    <div id="results"></div>
+        </div>
+
+        <!-- Right Sidebar: Claude Self-Search Integration -->
+        <div class="sidebar">
+            <h3>🤖 Claude Self-Search</h3>
+
+            <div class="tip">
+                <div class="tip-title">Enable in Claude Code</div>
+                <div class="tip-content">
+                    Add this to <code>~/.claude/CLAUDE.md</code> so Claude can search its own conversation history:
+                </div>
+            </div>
+
+            <div class="tip">
+                <div class="tip-title">Search API</div>
+                <div class="tip-content">
+                    <code>curl "http://localhost:8000/api/search?q=YOUR_QUERY&limit=5"</code>
+                </div>
+            </div>
+
+            <div class="tip">
+                <div class="tip-title">Get Conversation</div>
+                <div class="tip-content">
+                    <code>curl "http://localhost:8000/api/conversation/CONV_ID"</code>
+                </div>
+            </div>
+
+            <div class="tip">
+                <div class="tip-title">Full Instructions</div>
+                <div class="tip-content">
+                    See <code>CLAUDE.example.md</code> in the searchat repo for the complete template to add to your global CLAUDE.md file.
+                </div>
+            </div>
+
+            <div class="tip">
+                <div class="tip-title">Use Cases</div>
+                <div class="tip-content">
+                    • "Did we discuss X before?"<br>
+                    • "Find past solutions for Y"<br>
+                    • "How did we implement Z?"<br>
+                    • Check previous debugging sessions
+                </div>
+            </div>
+
+            <div class="tip">
+                <div class="tip-title">API Parameters</div>
+                <div class="tip-content">
+                    <code>mode</code> - cross-layer/verbatim/distill<br>
+                    <code>limit</code> - max results (1-100)<br>
+                    <code>project</code> - filter by project name
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript ES6 Module -->
+    <script type="module" src="/static/js/main.js?v=4"></script>
+</body>
+</html>

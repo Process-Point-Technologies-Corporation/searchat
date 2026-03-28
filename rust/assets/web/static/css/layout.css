@@ -1,0 +1,23 @@
+/* Layout - Grid and Responsive Design */
+.container {
+    display: grid;
+    grid-template-columns: 280px 1fr 280px;
+    gap: 24px;
+    max-width: 1800px;
+    margin: 0 auto;
+}
+
+.main-content {
+    min-width: 0;
+    position: relative;
+}
+
+/* Responsive Layout */
+@media (max-width: 1400px) {
+    .container {
+        grid-template-columns: 1fr;
+    }
+    .sidebar {
+        display: none;
+    }
+}

@@ -137,3 +137,15 @@ coverage.xml
 .benchmarks/
 
 benchmark_*.py
+
+# Rust build artifacts
+rust/target/
+
+# ONNX model binaries (too large for git; regenerate with scripts/export_onnx.py)
+rust/assets/model.onnx
+rust/assets/model.onnx.data
+rust/assets/tokenizer.json
+rust/assets/config.json
+rust/assets/special_tokens_map.json
+rust/assets/tokenizer_config.json
+rust/assets/vocab.txt

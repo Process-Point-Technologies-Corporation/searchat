@@ -1,0 +1,14 @@
+[package]
+name = "searchat-embed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ort = { workspace = true }
+tokenizers = { workspace = true }
+ndarray = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+lru = { workspace = true }
+parking_lot = { workspace = true }

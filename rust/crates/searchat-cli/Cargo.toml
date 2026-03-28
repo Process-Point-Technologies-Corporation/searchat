@@ -1,0 +1,26 @@
+[package]
+name = "searchat-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "searchat"
+path = "src/main.rs"
+
+[dependencies]
+searchat-models = { workspace = true }
+searchat-config = { workspace = true }
+searchat-storage = { workspace = true }
+searchat-search = { workspace = true }
+searchat-api = { workspace = true }
+searchat-embed = { workspace = true }
+clap = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tokio = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

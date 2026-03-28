@@ -1,0 +1,18 @@
+[package]
+name = "searchat-watcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+searchat-config = { workspace = true }
+searchat-agents = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-mini = { workspace = true }
+tokio = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
